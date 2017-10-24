@@ -18,11 +18,11 @@ import pandas as pd
 import numpy as np
 
 # Schedule filepaths.
-arrivals_csv_file = "schedules/sample_arrivals.csv"
-servers_csv_file = "schedules/sample_servers.csv"
+arrival_schedule_csvfile = "schedules/sample_arrival_schedule.csv"
+server_schedule_csvfile = "schedules/sample_server_schedule.csv"
 
 
-def retrieve_arrivals():
+def retrieve_arrival_schedule():
   """
   Function for retrieving a CSV of plane arrivals, sorted by arrival
   time.  Pandas library converts CSV into dataframe.  For correct CSV
@@ -35,12 +35,12 @@ def retrieve_arrivals():
     arr_sched: Pandas Dataframe.
   """
   # Import with Pandas.
-  arr_sched = pd.read_csv(arrivals_csv_file)
+  arr_sched = pd.read_csv(arrival_schedule_csvfile)
   
   return arr_sched
 
 
-def retrieve_servers():
+def retrieve_server_schedule():
   """
   Function for retrieving a CSV of server uptimes. Pandas library
   converts CSV into dataframe.  For correct CSV formatting, see the
@@ -53,6 +53,6 @@ def retrieve_servers():
     servers_sched: Pandas Dataframe.
   """
   # Import with Pandas.
-  servers_sched = pd.read_csv(servers_csv_file)
+  servers_sched = pd.read_csv(server_schedule_csvfile)
   
   return servers_sched

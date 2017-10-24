@@ -32,11 +32,11 @@ from customs_obj import Customs
 from customs_obj import _get_sec
 
 # Macros.
-GLOBAL_TIME = "00:00"
+GLOBAL_TIME = _get_sec("00:00:00")
 PASSENGER_COUNT = 0
 
 
-def simulate(arrival_schedule, server_schedule, customs):
+def simulate(customs, plane_dispatcher, server_schedule):
   """
   Op:
     Run Customs Simulations for a number of steps.
@@ -52,13 +52,13 @@ def simulate(arrival_schedule, server_schedule, customs):
 
   global GLOBAL_TIME
 
-  while GLOBAL_TIME != _get_sec("24:00"):
+  while GLOBAL_TIME <= _get_sec("24:00:00"):
 
     # Update the servers according to the server schedule.
     customs.update_servers(server_schedule)
 
     # Run the plane dispatcher.
-    arriving_plane = PlaneDispatcher.dispatch_planes(arrival_schedule)
+    arriving_plane = plane_dispatcher.dispatch_plane(GLOBAL_TIME)
     
     # Add plane passengers to customs.
     customs.handle_passengers(arriving_plane)
@@ -83,13 +83,16 @@ def main(argv=None):
   """
 
   # Retrieve schedules from external csv files.
-  arr_schedule = customs_schedules.retrieve_arrivals()
-  server_schedule = customs_schedules.retrieve_servers()
+  arrival_schedule = customs_schedules.retrieve_arrival_schedule()
+  server_schedule = customs_schedules.retrieve_server_schedule()
 
   # Build customs graph from external text file.
   customs = customs_build.build()
 
+  # Initialize a plane dispatcher to handle arrivals.
+  plane_dispatcher = PlaneDispatcher(arrival_schedule)
+
   # Simulate and output data.
-  simulate(arr_schedule, server_schedule, customs)
+  simulate(customs, plane_dispatcher, server_schedule)
 
 
