@@ -18,20 +18,20 @@ import numpy as np
 
 import customs_obj
 
-# Filepath of Customs Architecture
-customs_arch_csvfile = "schedules/sample_arrival_schedule.csv"
 
-
-def build():
+def build(server_architecture):
   """
   Builds the Customs network.  Reads architecture into Pandas
   dataframe.  Converts dataframe into Customs object.
-  """
-  # Import architecture into a Pandas dataframe.
-  customs_architecture = pd.read_csv(customs_arch_csvfile)
 
+  Args:
+    server_architecture: a Pandas dataframe
+
+  Returns:
+    rtn: an initialized Customs object
+  """
   # Convert to Customs obejct.
-  rtn = customs_obj.Customs(customs_architecture)
+  rtn = customs_obj.Customs(server_architecture)
 
   return rtn
 

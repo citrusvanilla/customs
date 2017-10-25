@@ -6,7 +6,6 @@
 ##  Copyright 2017 Justin Fung. All rights reserved.
 ##
 ## ====================================================================
-
 """A module for simulating throughput of the international arrivals
 customs at JFK airport.
 
@@ -35,21 +34,21 @@ from customs_obj import _get_sec
 GLOBAL_TIME = _get_sec("00:00:00")
 PASSENGER_COUNT = 0
 
+## ====================================================================
+
 
 def simulate(customs, plane_dispatcher, server_schedule):
   """
-  Op:
-    Run Customs Simulations for a number of steps.
+  Run Customs Simulations for a number of steps.
 
   Args:
-    arrival_schedule: a schedule of plane arrivals as pandas dataframe
-    server_schedule: a schedule of online server.
-    customs: an instantiated Customs object representing the customs system
+    customs: an initialized Customs object
+    plane_dispatcher: an initialized PlaneDispatcher object
+    server_schedule: a Pandas dataframe
 
   Returns:
     VOID
   """  
-
   global GLOBAL_TIME
 
   while GLOBAL_TIME <= _get_sec("24:00:00"):
@@ -63,17 +62,15 @@ def simulate(customs, plane_dispatcher, server_schedule):
     # Add plane passengers to customs.
     customs.handle_passengers(arriving_plane)
 
-    # Service assignment queues.
-    customs.dom_section.assign_passengers()
-    customs.intl_section.assign_passengers()
-
-    # Service agent queues.
-    customs.dom_section.service_passengers()
-    customs.intl_section.service_passengers()
+    # Assign and Service Passengers.
+    for section in customs.subsections:
+        # Assign Passengers to ServiceAgents.
+        section.assignment_agent.assign_passengers(section.parallel_server)
+        # Service Passengers in the ParallelServers.
+        section.parallel_server.service_passengers()
 
     # Increment global time.
     GLOBAL_TIME += 1
-
 
 
 def main(argv=None):
@@ -83,16 +80,16 @@ def main(argv=None):
   """
 
   # Retrieve schedules from external csv files.
-  arrival_schedule = customs_schedules.retrieve_arrival_schedule()
-  server_schedule = customs_schedules.retrieve_server_schedule()
+  arrival_schedule = customs_input.retrieve_arrival_schedule()
+  server_schedule = customs_input.retrieve_server_schedule()
+  server_architecture = customs_input.retrieve_server_architecture()
 
   # Build customs graph from external text file.
-  customs = customs_build.build()
+  customs = customs_build.build(server_architecture)
 
   # Initialize a plane dispatcher to handle arrivals.
   plane_dispatcher = PlaneDispatcher(arrival_schedule)
 
   # Simulate and output data.
   simulate(customs, plane_dispatcher, server_schedule)
-
 

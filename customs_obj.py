@@ -269,6 +269,10 @@ class Customs(object):
   	Returns:
   	  VOID
   	"""
+  	# Immediately return if plane is null.
+  	if plane is None:
+  		return
+
   	# Loop through all the passengers in the plane.
   	while len(plane.plist) > 0:
   		# Loop through all the sections.
@@ -580,8 +584,4 @@ class ServicedPassengers(object):
 	  ServicedPassengers initialization member function.
 	  """
 	  self.passengers = []
-
-
-
-
 
