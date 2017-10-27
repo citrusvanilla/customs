@@ -7,13 +7,14 @@
 ##
 ## ====================================================================
 
-"""Handles schedules and server architecture for simulating throughput
+"""
+Handles schedules and server architecture for simulating throughput
 of the international arrivals customs at JFK airport.  Schedules in CSV
 for arrivals and server uptime.
 
 Usage:
-Please see the README for how to compile the program and run the model
-and CSV formatting requirements.
+  Please see the README for how to compile the program and run the
+  model and CSV formatting requirements.
 """
 import pandas as pd
 import numpy as np

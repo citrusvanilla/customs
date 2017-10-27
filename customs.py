@@ -6,18 +6,18 @@
 ##  Copyright 2017 Justin Fung. All rights reserved.
 ##
 ## ====================================================================
-"""A module for simulating throughput of the international arrivals
+"""
+A module for simulating throughput of the international arrivals
 customs at JFK airport.
 
 Performance:
 
-
-System                       | Simulation Time for 24hours
-------------------------------------------------------------
-1 CPU 2.6 GHz Intel Core i5  |
+  System                       | Simulation Time for 24hours
+  ------------------------------------------------------------
+  1 CPU 2.6 GHz Intel Core i5  |
 
 Usage:
-Please see the README for how to compile the program and run the model.
+  Please see the README for how to compile the program and run the model.
 """
 
 import pandas as pd
@@ -79,7 +79,7 @@ def main(argv=None):
   representation of the customs system, and simulates the throughput.
   """
 
-  # Retrieve schedules from external csv files.
+  # Retrieve schedules and architecture from external CSV files.
   arrival_schedule = customs_input.retrieve_arrival_schedule()
   server_schedule = customs_input.retrieve_server_schedule()
   server_architecture = customs_input.retrieve_server_architecture()

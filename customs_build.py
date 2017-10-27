@@ -7,11 +7,12 @@
 ##
 ## ====================================================================
 
-"""Module for building the customs system intended to model throughput
+"""
+Module for building the customs system intended to model throughput
 of the JFK international customs.
 
 Usage:
-Please see the README for how to compile the program and run the model.
+  Please see the README for how to compile the program and run the model.
 """
 import pandas as pd
 import numpy as np
