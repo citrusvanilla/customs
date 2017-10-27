@@ -1,4 +1,4 @@
-plane_id,arrival_time,passengers_dom,passengers_intl
+id,arrival_time,passengers_dom,passengers_intl
 1,00:25:00,200,200
 2,00:45:00,200,200
 3,01:20:00,200,200
