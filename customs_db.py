@@ -9,13 +9,21 @@
 
 """
 Builds an SQLite database to local disk to hold program data.
+Can be invoked from the command line through the following:
+
+> python customs_db.py
 
 Usage:
-  Please see the README for how to compile the program and run the
-  model and CSV formatting requirements.
+  Please see README for how to compile the program and run the
+  model and data formatting requirements.
+
+Relevant DOCS:
+  - https://faker.readthedocs.io/en/latest/providers/faker.providers.person.html
 """
 import sqlite3
 import pandas
+
+from faker import Faker
 
 # Customs Database Metadata:
 sqlite_file = "customs_db.sqlite"
@@ -55,11 +63,21 @@ def build(sqlite_file, arrivals_csv, servers_csv):
 								  '\'12-16\' integer, '
 								  '\'16-20\' integer, '
 								  '\'20-24\' integer) '
-								   'WITHOUT ROWID;')
+								  'WITHOUT ROWID;')
+
+  passengers_table_create_query = ('CREATE TABLE passengers ('
+							        'id integer PRIMARY KEY, '
+							        'plane_id FOREIGN KEY, '
+								    'first_name text, '   #fake.first_name()
+								    'last_name integer, '  #fake.last_name()
+								    'birth_date integer, '  #fake.date_between(start_date="-70y", end_date="-4y")
+								    'nationality integer) '  #fake.country()
+								    'WITHOUT ROWID;')
 
   # Create new SQLite tables.
   cursor.execute(arrivals_table_create_query)
   cursor.execute(servers_table_create_query)
+  cursor.execute(passengers_table_create_query)
 
   # Use Pandas to commit a CSV to the database with an intermediate.
   df_arrivals = pandas.read_csv(arrival_schedule_csvfile)
@@ -67,6 +85,23 @@ def build(sqlite_file, arrivals_csv, servers_csv):
 
   df_arrivals.to_sql("arrivals", connection, if_exists='append', index=False)
   df_servers.to_sql("servers", connection, if_exists='append', index=False)
+
+  # Generate fake people for the database.
+  dom_intl_split_perc = 0.5
+
+  passenger_id = 1
+
+  for index, row in df_arrivals.iterrows():
+  	plane_id = row[0]
+  	first_name = fake.first_name()
+  	last_name = fake.last_name()
+  	birth_date = fake.date_between(start_date="-70y", end_date="-4y")
+  	nationality = fake.country() if random.random() <= dom_intl_split_perc 
+  	 							 else 'United States of America'
+
+
+
+
 
   # Commit changes and close the connection to the database file.
   connection.commit()
