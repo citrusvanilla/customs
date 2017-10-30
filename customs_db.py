@@ -32,6 +32,8 @@ sqlite_file = "customs_db.sqlite"
 arrival_schedule_csvfile = "schedules/sample_arrival_schedule.csv"
 server_schedule_csvfile = "schedules/sample_server_schedule.csv"
 
+# Data filepaths.
+airports_data_csvfile = "data/airports.csv"
 
 def build(sqlite_file, arrivals_csv, servers_csv):
   """
@@ -48,14 +50,14 @@ def build(sqlite_file, arrivals_csv, servers_csv):
 
   # Define Metadata for the tables.
   arrivals_table_create_query = ('CREATE TABLE arrivals ('
-				  				   'id integer PRIMARY KEY, '
+				  				   'plane_id integer PRIMARY KEY, '
 								   'arrival_time text, '
-								   'passengers_dom integer, '
-								   'passengers_intl integer) '
+								   'airline text, '
+								   'flight_number) '
 								   'WITHOUT ROWID;')
 
   servers_table_create_query = ('CREATE TABLE servers ('
-							      'id integer PRIMARY KEY, '
+							      'server_id integer PRIMARY KEY, '
 								  'subsection text, '
 								  '\'0-4\' integer, '
 								  '\'4-8\' integer, '
@@ -66,7 +68,7 @@ def build(sqlite_file, arrivals_csv, servers_csv):
 								  'WITHOUT ROWID;')
 
   passengers_table_create_query = ('CREATE TABLE passengers ('
-							        'id integer PRIMARY KEY, '
+							        'passenger_id integer PRIMARY KEY, '
 							        'plane_id FOREIGN KEY, '
 								    'first_name text, '   #fake.first_name()
 								    'last_name integer, '  #fake.last_name()
@@ -74,17 +76,26 @@ def build(sqlite_file, arrivals_csv, servers_csv):
 								    'nationality integer) '  #fake.country()
 								    'WITHOUT ROWID;')
 
+  airports_table_create_query = ('CREATE TABLE airports ('
+  	     						   'code text PRIMARY KEY, '
+  	     						   'name text, '
+  	     						   'city text, '
+  	     						   'country text);')
+
   # Create new SQLite tables.
   cursor.execute(arrivals_table_create_query)
   cursor.execute(servers_table_create_query)
   cursor.execute(passengers_table_create_query)
+  cursor.execute(airports_table_create_query)
 
   # Use Pandas to commit a CSV to the database with an intermediate.
   df_arrivals = pandas.read_csv(arrival_schedule_csvfile)
   df_servers = pandas.read_csv(server_schedule_csvfile)
+  df_airports = pandas.read_csv(airports_data_csvfile)
 
   df_arrivals.to_sql("arrivals", connection, if_exists='append', index=False)
   df_servers.to_sql("servers", connection, if_exists='append', index=False)
+  df_airports.to_sql("airports", connection, if_exists='append', index=False)
 
   # Generate fake people for the database.
   dom_intl_split_perc = 0.5
