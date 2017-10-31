@@ -31,9 +31,11 @@ import html5lib
 ## ====================================================================
 
 # Filename of the customs database.
-customs_db = 'customs_db_test.sqlite'
+customs_db = 'customs_db_test2.sqlite'
 
 # List of URLs of pages we want to scrape.
+base_url = "https://www.airport-jfk.com"
+
 urls = ["https://www.airport-jfk.com/arrivals.php?tp=0",
         "https://www.airport-jfk.com/arrivals.php?tp=6",
         "https://www.airport-jfk.com/arrivals.php?tp=12",
@@ -49,6 +51,7 @@ flight_divs = {'parent_div': 'flight_detail',
 
 # Define Metadata for the new table.
 arrivals_table_create_query = ('CREATE TABLE arrivals ('
+                                 'id integer primary key, '
                                  'origin text, '
                                  'airport_code text, '
                                  'arrival_time text, '
@@ -289,8 +292,9 @@ def scrape_arrivals(database, urls):
   cleaner = CleanExtractAndVerify()
 
   # Initialize some counters for status updates.
-  bad_data = 0
+  total_bad_data = 0
   loaded_flights = 0
+  total_records = 0
 
   # Scrape one url at a time.
   for url_num, url in enumerate(urls):
@@ -302,13 +306,25 @@ def scrape_arrivals(database, urls):
 
     # Extract flight parent DIV.
     flights = soup.findAll(id=flight_divs['parent_div'])
+    print ("====================================================")
+    print ("Found ", len(flights), " total records in URL #",
+           url_num+1, ".", sep="")
 
-    # Loop through all results of the parent DIV.
-    num_flights = len(flights)
+    # Initialize some counter variables.
+    last_record = (None,None,None)
     url_flights = 0
-    print ("Found ", num_flights, " records in URL #", url_num+1, "...", sep="")
+    url_bad_data = 0
 
+    # Loop through all records.
     for record_num, flight in enumerate(flights):
+
+      # Status update
+      total_records += 1
+      if total_records % 50 == 0 and record_num != 0:
+        print ("====================================================")
+        print ("Checked ", total_records,
+             " records total so far.", sep="")
+        print ("====================================================")
 
       # Initialize a dic of flight attributes to None.
       flight_attrs = {'origin': None,
@@ -335,8 +351,38 @@ def scrape_arrivals(database, urls):
 
       # Skip the database insertion if we are missing attributes.
       if None in flight_attrs.values():
-        bad_data += 1
+        total_bad_data += 1
+        url_bad_data += 1
+        print (total_records, ': Bad flight found.  Discarding.', sep="")
         continue
+
+      '''
+      # Skip the database insertion if we are inserting a duplicate flight.
+      if (flight_attrs['origin'],
+          flight_attrs['arrival_time'], 
+          flight_attrs['terminal']) == last_record:
+        total_bad_data += 1
+        url_bad_data += 1
+        print ('duplicate flight found.')
+        continue
+        '''
+      
+
+      # Determine if this the operator of the flight, not a code-share flight.
+      # If code-share, skip.
+      flight_page_link = arrival_time_result.find('a').attrs['href']
+      flight_page_html = requests.get(base_url+flight_page_link).text
+      
+      if re.search('This is a codeshare flight.', flight_page_html):
+        total_bad_data += 1
+        url_bad_data += 1
+        print (total_records, ': Code share flight found.  Discarding.', sep="")
+        continue
+      else:
+        last_record = (flight_attrs['origin'],
+                       flight_attrs['arrival_time'],
+                       flight_attrs['terminal'])
+
 
       # Insert into the customs database using SQLite query.
       formatted_query = insertion_query.format(
@@ -347,24 +393,28 @@ def scrape_arrivals(database, urls):
                                     flight_num=flight_attrs['flight_num'],
                                     terminal=flight_attrs['terminal'])
       cursor.execute(formatted_query)
+      print(total_records, ": Original flight inserted into database.", sep="")
+      connection.commit()
 
       # Status update
       loaded_flights += 1
       url_flights += 1
-      if loaded_flights % 100 == 0:
-        print ("Loaded ", loaded_flights,
-               " total flights so far into the database...", sep="")
 
     # End of URL.
-    print (url_flights, " records in URL #", url_num+1, " loaded.\n", sep="")
+    print ("====================================================")
+    print (url_flights, " good records in URL #", url_num+1, " loaded.",
+           sep="")
+    print (url_bad_data, " bad and duplicate records in URL #", url_num+1,
+           " discarded.", sep="")
 
   # Clean-up resources.
   connection.commit()
   connection.close()
 
   # Write out scraping performance.
+  print ("====================================================")
   print ("Scraping completed.\n", loaded_flights, " good records loaded.\n",
-         bad_data, " bad records discarded.\n", "Total time: ",
+         total_bad_data, " bad records discarded.\n", "Total time: ",
          int(time.time()-start), " seconds.\n", sep="")
 
 ## ====================================================================
