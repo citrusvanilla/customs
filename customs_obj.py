@@ -15,9 +15,11 @@ construction.
 Usage:
   Please see the README for how to compile the program and run the model.
 """
+from __future__ import print_function
 
 import re
 import sqlite3
+import numpy as np
 
 
 # Macros
@@ -82,9 +84,9 @@ def sample_from_triangular(service_dist):
     sample: service time in seconds as integer
 
   """
-  lower = _get_sec(lower)
-  mode = _get_sec(mode)
-  upper = _get_sec(upper)
+  lower = _get_sec(service_dist[0])
+  mode = _get_sec(service_dist[1])
+  upper = _get_sec(service_dist[2])
 
   sample = int(np.random.triangular(lower, mode, upper))
 
@@ -114,11 +116,12 @@ class PlaneDispatcher(object):
     PlaneDispatcher must be instantiated with an arrivals schedule
     whose format is specified in the README.  Counts are set to zero.
     """
-    self.connection = sqlite3.connect(db)
+    self.connection = sqlite3.connect(sqlite_database)
     self.cursor = self.connection.cursor()
-    self.schedule = arrival_schedule
+    #self.schedule = arrival_schedule
     self.plane_count = 0
     self.passenger_count = 0
+
 
   def dispatch_plane(self, global_time):
     """
@@ -131,29 +134,64 @@ class PlaneDispatcher(object):
     Returns:
       new_plane: a Plane object
     """
-    # Query database for a potential arrival.
-    query = 'SELECT id, arrival_time, passengers_dom, passengers_intl '
-              'FROM arrivals '
-              'WHERE arrival_time == {time!r}'\
-            .format(time = _get_ttime(global_time)))
+    # Init a list to hold the plane objects.
+    planes = []
 
-    result = self.cursor.execute(query).fetchall()
+    # Query database for a potential international arrivals.
+    arrivals = self.cursor.execute('SELECT arrivals.id, '
+                                       'arrivals.origin, '
+                                       'arrivals.airport_code, '
+                                       'arrivals.arrival_time, '
+                                       'arrivals.airline, '
+                                       'arrivals.flight_num, '
+                                       'arrivals.terminal '
+                                   'FROM arrivals LEFT JOIN airports '
+                                   'ON arrivals.airport_code = airports.code '
+                                   'WHERE arrivals.code_share = \'\' '
+                                   'AND arrivals.arrival_time = \'{time}\' '
+                                   'AND airports.country != \"United States\";'\
+                              .format(time=_get_ttime(global_time))).fetchall()
 
-    # If global time coincides with an arrival, generate a new plane.
-    if len(result) >= 1:
+    # For each arrival, init a new Plane object.
+    for arrival in arrivals:
 
-      # Init new Plane object with details from the schedule.
-      planes = [Plane(result[i][0], result[i][1], result[i][2], result[i][3])
-                for i in range(len(result))]
+      # Grab arrival attributes.
+      pid, origin, airport_code, \
+      arrival_time, airline, flight_num, terminal = arrival
+
+      # Grab the passenger manifest from the database.
+      plist = self.cursor.execute('SELECT id, '
+                                     'flight_num, '
+                                     'first_name, '
+                                     'last_name, '
+                                     'birthdate, '
+                                     'nationality '
+                                  'FROM passengers '
+                                  'WHERE flight_num = \'{flight_num}\';'\
+                                   .format(flight_num=flight_num)).fetchall()
+
+      # Init a Plane object and append to list.
+      planes.append(Plane(pid,
+                          origin,
+                          airport_code,
+                          arrival_time,
+                          airline,
+                          flight_num,
+                          terminal, 
+                          plist))
 
       # Increment counts for planes and passengers dispatched.
-      self.plane_count += len(planes)
-      for plane in planes:
-        self.passenger_count += len(plane.plist)
+      self.plane_count += 1
+      self.passenger_count += len(plist)
 
-      return planes
+    # Return the Plane objects, if any.
+    return planes
+
 
   def __del__(self):
+    '''
+    Overwrite default destroyer method.
+    '''
     self.connection.close()
 
 
@@ -162,24 +200,37 @@ class Plane(object):
   Class representing an arriving Plane.
 
   Member Data:
-    id = id of the plane as a unique, sequential integer
-    plist = a list holding Passenger objects representing passengers
-    global_time = simulation arrival time
+    self.id = plane_id
+    self.origin = origin
+    sefl.airport_code = airport_code
+    self.arrival_time = arrival_time
+    self.airline = airline
+    self.flight_num = flight_num
+    self.terminal = terminal
+    self.plist = self.init_plist(plist)
 
   Member Fuctions:
     init_plist: initializes a list of passengers upon instantiation
                 of the Plane object
   """
-  def __init__(self, plane_id, arrival_time, passengers_dom, passengers_intl):
+  def __init__(self, plane_id, origin, airport_code, arrival_time, airline,
+               flight_num, terminal, passenger_list):
     """
-    Plane class must be instantiated with a tuple representing
-    arrival data retrieved from the customs database.
+    Plane class initializer method.
     """
     self.id = plane_id
+    self.origin = origin
+    self.airport_code = airport_code
     self.arrival_time = arrival_time
-    self.plist = self.init_plist(arrival_time, passengers_dom, passengers_intl)
+    self.airline = airline
+    self.flight_num = flight_num
+    self.terminal = terminal
+    self.num_dom_passengers = 0
+    self.num_intl_passengers = 0
+    self.plist = self.init_plist(passenger_list)
 
-  def init_plist(self, arrival_time, passengers_dom, passengers_intl):
+
+  def init_plist(self, passenger_list):
     """
     Plane class member function for initializing a list of passenger
     objects.
@@ -191,21 +242,33 @@ class Plane(object):
     Returns:
       rtn: a list of Passenger objects.
     """
-    rtn = []
+    # Init empty list to hold Passenger objects.
+    plist = []
 
-    # Suss out counts of domestic and international passengers per plane.
-    num_passengers_dom = passengers_dom
-    num_passengers_intl = passengers_intl
+    # Iterate through the flight manifest.
+    for passenger in passenger_list:
 
-    # Add domestic passengers to the passenger list.
-    for i in range(num_passengers_dom):
-      run.append(Passenger('dom', arrival_time))
+      # Grab attributes.
+      pid, flight_num, first_name, \
+      last_name, birthdate, nationality = passenger
 
-    # Add international passengers to the passenger list.
-    for i in range(num_passengers_intl):
-      rtn.append(Passenger('intl', arrival_time))
+      # Init and append Passenger object with attributes.
+      plist.append(Passenger(pid,
+                             flight_num,
+                             self.arrival_time,
+                             first_name,
+                             last_name,
+                             birthdate,
+                             nationality))
 
-    return rtn
+      # Increment passenger count.
+      if plist[-1].nationality == 'domestic':
+        self.num_dom_passengers += 1
+      else:
+        self.num_intl_passengers += 1
+
+    # Return list of instantiated Passenger objects.
+    return plist
 
 
 class Passenger(object):
@@ -225,11 +288,17 @@ class Passenger(object):
     init_id: initialized id member with unique identifier.
     init_service_time: update function to indicate that service has begun.
   """
-  def __init__(self, nationality, arrival_time):
-    """
+  def __init__(self, pid, flight_num, arrival_time, first_name, last_name,
+               birthdate, nationality):
+    '''
     Passenger class must be initialized with nationality and global time.
-    """
-    self.id = self.init_id()
+    '''
+    self.id = pid
+    self.flight_num = flight_num
+    self.arrival_time = arrival_time
+    self.first_name = first_name
+    self.last_name = last_name
+    self.birthdate = birthdate
     self.nationality = nationality
     self.enque_time = _get_sec(arrival_time)
     self.soujourn_time = -1
@@ -237,21 +306,14 @@ class Passenger(object):
     self.connect_flight = False
     self.processed = False
 
-  def init_id(self):
-    """
-    Initialize a passenger ID with a global value.
-    """
-    global PASSENGER_ID
-    self.id = PASSENGER_ID
-    PASSENGER_ID += 1
 
   def init_service_time(self):
     """
     Generate a random service time from a passed distribution.
     """
-    if self.nationality == "dom":
+    if self.nationality == "domestic":
       return sample_from_triangular(service_dist_dom)
-    elif self.nationaliy == "intl":
+    elif self.nationality == "foreign":
       return sample_from_triangular(service_dist_intl)
 
 
@@ -282,6 +344,7 @@ class Customs(object):
     self.serviced_passengers = ServicedPassengers()
     self.subsections = self.init_subsections(server_architecture)
 
+
   def init_subsections(self, customs_arch):
     """
     Customs Class member function for initializing Subsection objects.
@@ -307,12 +370,16 @@ class Customs(object):
         subsection_arch = customs_arch[customs_arch['subsection']==subsection_id]
         # Get the processed passenger queue from the Class Data Members list.
         serviced_passengers_list = self.serviced_passengers
+
+        print(subsection_id, sep= " ")
         # Init a subsection and append to the list.
-        section_list.append(Subsection(subsection_arch,
+        section_list.append(Subsection(subsection_id,
+                                       subsection_arch,
                                        serviced_passengers_list))
 
     return section_list
   
+
   def handle_arrivals(self, plane):
     """
     Method for handling a plane of arriving passengers.
@@ -354,7 +421,7 @@ class Customs(object):
     # Loop through the dataframe columns to find the correct column.
     for idx, col in enumerate(server_schedule.columns):
       if re.search('[0-9]-[0-9]', col):
-        if _get_sec(col.split('-')[0] + ":00:00") <= GLOBAL_TIME <=
+        if _get_sec(col.split('-')[0] + ":00:00") <= GLOBAL_TIME <= \
            _get_sec(col.split('-')[1] + ":00:00"):
            time_idx = idx
            break
@@ -366,7 +433,7 @@ class Customs(object):
         # Find the row corresponding to the server in the server schedule.
         matched_entry = server_schedule[server_schedule['id'] == server.id]
         # Extract the status of the server using the global time.
-        online_status = matched_entry[].iloc[:,[time_idx]].values[0][0]
+        online_status = matched_entry.iloc[:,[time_idx]].values[0][0]
         # Update the server status.
         if online_status == 1:
           server.is_serving = True 
@@ -386,7 +453,7 @@ class Subsection(object):
     assignment_agent: an initialized AssignmentAgent object
     parallel_server: an initialized ParallelServer object
   """
-  def __init__(self, subsection_arch, serviced_passengers):
+  def __init__(self, subsection_id, subsection_arch, serviced_passengers):
     """
     Subsection Class initialization function.
 
@@ -394,7 +461,7 @@ class Subsection(object):
       subsection_arch: a Pandas dataframe
       serviced_passengers: a python list
     """
-    self.id = name
+    self.id = subsection_id
     self.parallel_server = ParallelServer(subsection_arch, serviced_passengers)
     self.assignment_agent = AssignmentAgent(self.parallel_server)
 
@@ -427,7 +494,7 @@ class ParallelServer(object):
     self.server_list = self.init_server_list(subsection_arch,
                                              serviced_passengers)
     self.has_space_in_a_server_queue = True
-    self.queues_size = 0
+    self.queue_size = 0
     self.min_queue = None
 
   def init_server_list(self, subsection_arch, output_list):
@@ -450,10 +517,8 @@ class ParallelServer(object):
     rtn = []
 
     # Loop through all servers in the arch.
-    while idx < num_servers:
-      rtn.append(ServiceAgent(subsection_arch.loc[idx,'id'],
-                              output_list))
-      idx += 1
+    for idx, row in subsection_arch.iterrows():
+      rtn.append(ServiceAgent(row['id'], output_list))
 
     return rtn
 
