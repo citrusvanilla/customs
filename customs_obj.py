@@ -6,6 +6,7 @@
 ##  Copyright 2017 Justin Fung. All rights reserved.
 ##
 ## ====================================================================
+
 """
 Objects for simulating throughput of the international arrivals
 customs at JFK airport.  The customs system is modeled through OO
@@ -14,7 +15,9 @@ construction.
 Usage:
   Please see the README for how to compile the program and run the model.
 """
+
 import re
+import sqlite3
 
 
 # Macros
@@ -26,19 +29,46 @@ service_dist_intl = ("00:00:45","00:01:00","00:02:15")
 
 # Helper functions
 def _get_sec(time_str):
-    """
-    Convert a string in "HH:MM:SS" format to seconds as an integer.
+  """
+  Convert a string in "HH:MM:SS" format to seconds as an integer.
 
-    Args:
-      time_str: a string in "HH:MM:SS" format
+  Args:
+    time_str: a string in "HH:MM:SS" format
 
-    Returns:
-      seconds: an integer
-    """
-    h, m, s = time_str.split(':')
-    seconds = int(h) * 3600 + int(m) * 60 + int(s)
+  Returns:
+    seconds: an integer
+  """
+  h, m, s = time_str.split(':')
+  seconds = int(h) * 3600 + int(m) * 60 + int(s)
     
-    return seconds
+  return seconds
+
+
+def _get_ttime(seconds):
+  """
+  Convert seconds as an integer to "HH:MM:SS" format.
+
+  Args:
+    seconds: an integer
+
+  Returns:
+    time_str: a string in "HH:MM:SS" format
+  """
+  # Factor out hours, minutes and seconds into integers.
+  h = int(seconds/3600)
+  m = int(seconds%3600)/60
+  s = int(seconds%3600)%60
+
+  # If number of characters of the factors is 1, prepend zeroes to string.
+  HH = "0" + str(h) if int(h/10) == 0 else str(h)
+  MM = "0" + str(m) if int(m/10) == 0 else str(m)
+  SS = "0" + str(s) if int(s/10) == 0 else str(s)
+
+  # Concatenate result and return.
+  time_str = HH + ":" + MM + ":" + SS
+    
+  return time_str
+
 
 def sample_from_triangular(service_dist):
   """
@@ -56,12 +86,13 @@ def sample_from_triangular(service_dist):
   mode = _get_sec(mode)
   upper = _get_sec(upper)
 
-  sample = int(np.random.triangular(lower,mode, upper))
+  sample = int(np.random.triangular(lower, mode, upper))
 
   return sample
 
 
 ## ====================================================================
+
 
 class PlaneDispatcher(object):
   """
@@ -78,11 +109,13 @@ class PlaneDispatcher(object):
     dispatch_plane: returns initialized planes if simulation time
                     matches an arrival.
   """
-  def __init__(self, arrival_schedule):
+  def __init__(self, sqlite_database):
     """
     PlaneDispatcher must be instantiated with an arrivals schedule
     whose format is specified in the README.  Counts are set to zero.
     """
+    self.connection = sqlite3.connect(db)
+    self.cursor = self.connection.cursor()
     self.schedule = arrival_schedule
     self.plane_count = 0
     self.passenger_count = 0
@@ -98,16 +131,30 @@ class PlaneDispatcher(object):
     Returns:
       new_plane: a Plane object
     """
+    # Query database for a potential arrival.
+    query = 'SELECT id, arrival_time, passengers_dom, passengers_intl '
+              'FROM arrivals '
+              'WHERE arrival_time == {time!r}'\
+            .format(time = _get_ttime(global_time)))
+
+    result = self.cursor.execute(query).fetchall()
+
     # If global time coincides with an arrival, generate a new plane.
-    if global_time == _get_sec(schedule.loc[self.plane_count, 'arrival_time']):
+    if len(result) >= 1:
+
       # Init new Plane object with details from the schedule.
-      new_plane = Plane(schedule.iloc[self.plane_count], global_time)
+      planes = [Plane(result[i][0], result[i][1], result[i][2], result[i][3])
+                for i in range(len(result))]
 
       # Increment counts for planes and passengers dispatched.
-      self.plane_count += 1
-      self.passenger_count += len(new_plane.plist)
+      self.plane_count += len(planes)
+      for plane in planes:
+        self.passenger_count += len(plane.plist)
 
-      return new_plane
+      return planes
+
+  def __del__(self):
+    self.connection.close()
 
 
 class Plane(object):
@@ -123,16 +170,16 @@ class Plane(object):
     init_plist: initializes a list of passengers upon instantiation
                 of the Plane object
   """
-  def __init__(self, plane_series, global_time):
+  def __init__(self, plane_id, arrival_time, passengers_dom, passengers_intl):
     """
-    Plane class must be instantiated with a Pandas series representing
-    plane data.
+    Plane class must be instantiated with a tuple representing
+    arrival data retrieved from the customs database.
     """
-    self.id = plane_series['plane_id']
-    self.plist = self.init_plist(plane_series, global_time)
-    self.arrival_time = global_time
+    self.id = plane_id
+    self.arrival_time = arrival_time
+    self.plist = self.init_plist(arrival_time, passengers_dom, passengers_intl)
 
-  def init_plist(self, plane_series, global_time):
+  def init_plist(self, arrival_time, passengers_dom, passengers_intl):
     """
     Plane class member function for initializing a list of passenger
     objects.
@@ -147,20 +194,16 @@ class Plane(object):
     rtn = []
 
     # Suss out counts of domestic and international passengers per plane.
-    for header in plane_series.index:
-        if re.search('passengers', header):
-            if re.search('dom', header):
-                num_passengers_dom = plane_series[header]
-            elif re.search('intl', header):
-                num_passengers_intl = plane_series[header]
+    num_passengers_dom = passengers_dom
+    num_passengers_intl = passengers_intl
 
     # Add domestic passengers to the passenger list.
     for i in range(num_passengers_dom):
-      run.append(Passenger('dom', global_time))
+      run.append(Passenger('dom', arrival_time))
 
     # Add international passengers to the passenger list.
     for i in range(num_passengers_intl):
-      rtn.append(Passenger('intl', global_time))
+      rtn.append(Passenger('intl', arrival_time))
 
     return rtn
 
@@ -182,13 +225,13 @@ class Passenger(object):
     init_id: initialized id member with unique identifier.
     init_service_time: update function to indicate that service has begun.
   """
-  def __init__(self, nationality, global_time):
+  def __init__(self, nationality, arrival_time):
     """
     Passenger class must be initialized with nationality and global time.
     """
     self.id = self.init_id()
     self.nationality = nationality
-    self.enque_time = global_time
+    self.enque_time = _get_sec(arrival_time)
     self.soujourn_time = -1
     self.service_time = self.init_service_time()
     self.connect_flight = False

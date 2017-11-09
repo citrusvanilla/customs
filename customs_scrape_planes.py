@@ -25,6 +25,10 @@ Helpful Debugging Commands:
 
 Performance:
 
+   Connection Speed | Total Time (hours) | Time per record (sec)
+  -----------------------------------------------------------------
+        5 Mbps      |      ~ 4 hrs.      |      ~ 5.7 sec.
+
 
 TODO:
   - complete the fill_search_form_and_submit error handling
@@ -49,7 +53,7 @@ import html5lib
 
 
 # Customs database filepath.
-customs_db = "customs_db_test.sqlite"
+customs_db = ""
 
 # Webdriver binary/executable filepath.
 #webdriver_exe = '/usr/local/phantomjs-2.1.1-macosx/bin/phantomjs'
@@ -60,6 +64,7 @@ url = "https://www.seatguru.com/findseatmap/findseatmap.php"
 
 # SQLite query for creating a 'planes' table in an SQLite database.
 create_planes_table_query = ('CREATE TABLE planes ('
+                               'id integer primary key, '
                                'flight_num text, '
                                'carrier text, '
                                'aircraft text, '
@@ -294,15 +299,22 @@ def extract_plane_insert_and_return(driver, cursor_planes, flight_attrs):
     flight_attrs['aircraft'] = airplane.strip()
 
   # Check to see if this entry is already in the database.
-  # If yes, return false.
-  cursor_planes.execute('SELECT * FROM planes '
+  # If yes, return True.
+  cursor_planes.execute('SELECT total_seats FROM planes '
                           'WHERE carrier = \'{carrier}\' '
                           'AND aircraft = \'{aircraft}\';'\
                                  .format(carrier=flight_attrs['carrier'],
                                          aircraft=flight_attrs['aircraft']))
-  if len(cursor_planes.fetchall()) != 0:
-    print("(X) Plane already exists in the database.", sep="")
-    return False
+  plane = cursor_planes.fetchall()
+
+  if len(plane) != 0:
+    cursor_planes.execute(insertion_query.format(
+                              flight_num=flight_attrs['flight_num'],
+                              carrier=flight_attrs['carrier'],
+                              aircraft=flight_attrs['aircraft'],
+                              total_seats=plane[0][0]))
+    print("(+) Plane already exists in the database.", sep="")
+    return True
 
   try:
     # Navigate to the airplane's page.
@@ -355,8 +367,10 @@ def scrape_planes(driver, database, initial_record):
   indices = _get_indices(cursor_arrivals)
 
   # Point the cursor at the list of flights for which we want plane data.
-  cursor_arrivals.execute('SELECT * FROM arrivals LIMIT -1 OFFSET {idx};'\
-                           .format(idx=initial_record))
+  cursor_arrivals.execute('SELECT * FROM arrivals '
+                            'ORDER BY id '
+                            'LIMIT -1 OFFSET {start};'\
+                           .format(start=initial_record))
 
   # SOME COUNTERS
   inserted_planes = 0
@@ -368,6 +382,7 @@ def scrape_planes(driver, database, initial_record):
     # Status update.
     print("==================================================")
     print("FLIGHT RECORD #", int(initial_record) + idx, ":", sep="")
+    print(idx,row)
 
     # Initiate a dictionary of flight attributes for the web scraping
     # routine.
@@ -411,6 +426,8 @@ def scrape_planes(driver, database, initial_record):
       print ("Loaded ", inserted_planes,
              " total planes into the database so far.", sep="")
 
+    print (idx,row)
+
   # Clean-up resources.
   connection.commit()
   connection.close()
@@ -429,8 +446,11 @@ def main():
   Returns:
     VOID
   """
+  # Get the database name.
+  customs_db = sys.argv[1]
+
   # Get first index.
-  initial_record = sys.argv[1]
+  initial_record = sys.argv[2]
 
   # Load up the webdriver and point it to the top-level URL.
   driver = load_driver(webdriver_exe, url)
@@ -445,3 +465,4 @@ def main():
 
 if __name__ == "__main__":
   main()
+
