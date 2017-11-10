@@ -17,6 +17,7 @@ Usage:
   Please see the README for how to compile the program and run the model.
 """
 from __future__ import print_function
+from collections import deque
 
 import re
 import sqlite3
@@ -620,7 +621,7 @@ class AssignmentAgent(object):
     Args:
       parallel_server_obj: an initialized ParallelServer object
     """
-    self.queue = []
+    self.queue = deque()
     self.parallel_server = parallel_server
 
 
@@ -644,7 +645,7 @@ class AssignmentAgent(object):
           len(self.queue) > 0:
 
       # Pop the first passenger in line and assign to the shortest queue.
-      tmp = self.queue.pop(0)
+      tmp = self.queue.popleft()
       self.parallel_server.min_queue.queue.append(tmp)
 
       # Update the state of the parallel server after every assignment.
@@ -677,7 +678,7 @@ class ServiceAgent(object):
     """
     self.online = False
     self.id = server_id
-    self.queue = []
+    self.queue = deque()
     self.is_serving = False
     self.current_passenger = None
     self.output_queue = output_queue
@@ -708,7 +709,7 @@ class ServiceAgent(object):
     elif self.is_serving is False and len(self.queue) > 0:
 
       # Pull from front of the line.
-      self.current_passenger = self.queue.pop(0)
+      self.current_passenger = self.queue.popleft()
 
       # Update our status.
       self.is_serving = True
@@ -748,5 +749,5 @@ class ServicedPassengers(object):
       """
       ServicedPassengers initialization member function.
       """
-      self.queue = []
+      self.queue = deque()
 
