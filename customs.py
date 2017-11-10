@@ -39,7 +39,7 @@ from customs_obj import _get_sec
 # Macros.
 customs_db = "customs_db.sqlite"
 server_schedule_file = "schedules/sample_server_schedule.csv"
-
+spd_factor = 10
 
 ## ====================================================================
 
@@ -56,9 +56,9 @@ def simulate(customs, plane_dispatcher, server_schedule):
   Returns:
     VOID
   """
-  GLOBAL_TIME = _get_sec("00:00:00")
+  GLOBAL_TIME = _get_sec("07:00:00", spd_factor)
 
-  while GLOBAL_TIME <= _get_sec("24:00:00"):
+  while GLOBAL_TIME <= _get_sec("24:00:00", spd_factor):
 
     # Update the servers according to the server schedule.
     customs.update_servers(server_schedule, GLOBAL_TIME)
@@ -82,12 +82,11 @@ def simulate(customs, plane_dispatcher, server_schedule):
     GLOBAL_TIME += 1
 
     # Provide status update.
-    if GLOBAL_TIME % 60 == 0:
-      print (GLOBAL_TIME / 60, " mins: ", len(customs.serviced_passengers.queue),
-             " passengers serviced.", sep="")
-      '''print (len(customs.subsections[0].assignment_agent.queue))
-      print (len(customs.subsections[1].assignment_agent.queue))
-      print (customs.subsections[0].parallel_server.has_space_in_a_server_queue)
+    if GLOBAL_TIME % (60/spd_factor)  == 0:
+      print (GLOBAL_TIME / (60/spd_factor), " mins: ", len(customs.serviced_passengers.queue),
+             " passengers serviced.  ", len(customs.subsections[0].assignment_agent.queue) + \
+             len(customs.subsections[1].assignment_agent.queue), " passengers in queue.", sep='')
+      '''print (customs.subsections[0].parallel_server.has_space_in_a_server_queue)
       print (customs.subsections[1].parallel_server.has_space_in_a_server_queue)'''
 
 

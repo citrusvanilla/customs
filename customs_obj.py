@@ -29,8 +29,11 @@ import numpy as np
 service_dist_dom = ("00:00:30", "00:00:45", "00:02:00")
 service_dist_intl = ("00:00:45", "00:01:00", "00:02:15")
 
+# Speed up factor
+spd_factor = 10
+
 # Helper functions
-def _get_sec(time_str):
+def _get_sec(time_str, speed_factor):
   """
   Convert a string in "HH:MM:SS" format to seconds as an integer.
 
@@ -43,10 +46,13 @@ def _get_sec(time_str):
   h, m, s = time_str.split(':')
   seconds = int(h) * 3600 + int(m) * 60 + int(s)
 
+  # Adjust for speed.
+  seconds = seconds / speed_factor
+
   return seconds
 
 
-def _get_ttime(seconds):
+def _get_ttime(seconds, speed_factor):
   """
   Convert seconds as an integer to "HH:MM:SS" format.
 
@@ -56,6 +62,9 @@ def _get_ttime(seconds):
   Returns:
     time_str: a string in "HH:MM:SS" format
   """
+  # Adjust for speed.
+  seconds = seconds * speed_factor
+
   # Factor out hours, minutes and seconds into integers.
   h = int(seconds/3600)
   m = int(seconds%3600)/60
@@ -84,11 +93,13 @@ def sample_from_triangular(service_dist):
     sample: service time in seconds as integer
 
   """
-  lower = _get_sec(service_dist[0])
-  mode = _get_sec(service_dist[1])
-  upper = _get_sec(service_dist[2])
+  lower = _get_sec(service_dist[0], spd_factor)
+  mode = _get_sec(service_dist[1], spd_factor)
+  upper = _get_sec(service_dist[2], spd_factor)
 
   sample = int(np.random.triangular(lower, mode, upper))
+
+  #sample = 
 
   return sample
 
@@ -150,7 +161,7 @@ class PlaneDispatcher(object):
                                    'WHERE arrivals.code_share = \'\' '
                                    'AND arrivals.arrival_time = \'{time}\' '
                                    'AND airports.country != \"United States\";'\
-                              .format(time=_get_ttime(global_time))).fetchall()
+                    .format(time=_get_ttime(global_time, spd_factor))).fetchall()
 
     # For each arrival, init a new Plane object.
     for arrival in arrivals:
@@ -300,7 +311,7 @@ class Passenger(object):
     self.last_name = last_name
     self.birthdate = birthdate
     self.nationality = nationality
-    self.enque_time = _get_sec(arrival_time)
+    self.enque_time = _get_sec(arrival_time, spd_factor)
     self.soujourn_time = -1
     self.service_time = self.init_service_time()
     self.connect_flight = False
@@ -401,6 +412,8 @@ class Customs(object):
 
     # Loop through the list of Planes.
     for plane in planes:
+      print ("+ Added ", len(plane.plist), " passengers from flight ",
+             plane.flight_num, sep = "")
 
       # While the plane still has passengers on it...
       while len(plane.plist) > 0:
@@ -414,8 +427,6 @@ class Customs(object):
         elif plane.plist[-1].nationality == "foreign":
           self.subsections[id_foreign].assignment_agent.queue.append(
                                                             plane.plist.pop())
-
-      print ("ADDED", plane.flight_num, "!", sep = "")
 
 
   def update_servers(self, server_schedule, global_time):
@@ -434,8 +445,8 @@ class Customs(object):
     # Loop through the dataframe columns to find the correct column.
     for idx, col in enumerate(server_schedule.columns):
       if re.search('[0-9]-[0-9]', col):
-        if _get_sec(col.split('-')[0] + ":00:00") <= global_time <= \
-           _get_sec(col.split('-')[1] + ":00:00"):
+        if _get_sec(col.split('-')[0] + ":00:00", spd_factor) <= global_time <= \
+           _get_sec(col.split('-')[1] + ":00:00", spd_factor):
            time_idx = idx
            break
 
