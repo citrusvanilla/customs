@@ -6,7 +6,8 @@
 ##  Copyright 2017 Justin Fung. All rights reserved.
 ##
 ## ====================================================================
-
+# pylint: disable=bad-indentation,bad-continuation,multiple-statements
+# pylint: disable=invalid-name,trailing-newlines
 """
 Objects for simulating throughput of the international arrivals
 customs at JFK airport.  The customs system is modeled through OO
@@ -22,12 +23,11 @@ import sqlite3
 import numpy as np
 
 
-# Macros
-PASSENGER_ID = 0
+## ====================================================================
 
 # Service Distributions
-service_dist_dom = ("00:00:30","00:00:45","00:02:00")
-service_dist_intl = ("00:00:45","00:01:00","00:02:15")
+service_dist_dom = ("00:00:30", "00:00:45", "00:02:00")
+service_dist_intl = ("00:00:45", "00:01:00", "00:02:15")
 
 # Helper functions
 def _get_sec(time_str):
@@ -42,7 +42,7 @@ def _get_sec(time_str):
   """
   h, m, s = time_str.split(':')
   seconds = int(h) * 3600 + int(m) * 60 + int(s)
-    
+
   return seconds
 
 
@@ -68,7 +68,7 @@ def _get_ttime(seconds):
 
   # Concatenate result and return.
   time_str = HH + ":" + MM + ":" + SS
-    
+
   return time_str
 
 
@@ -123,7 +123,7 @@ class PlaneDispatcher(object):
     self.passenger_count = 0
 
 
-  def dispatch_plane(self, global_time):
+  def dispatch_planes(self, global_time):
     """
     PlaneDispatcher class method for initializing and returning a new
     plane on schedule.
@@ -177,7 +177,7 @@ class PlaneDispatcher(object):
                           arrival_time,
                           airline,
                           flight_num,
-                          terminal, 
+                          terminal,
                           plist))
 
       # Increment counts for planes and passengers dispatched.
@@ -363,24 +363,26 @@ class Customs(object):
 
     # Initialize each Subsection Class with a loop.
     for i in range(num_subsections):
-        # Get the label of the subsection.
-        subsection_id = customs_arch['subsection'].unique()[i]
-        # Subset the master architecture into an architecture just for
-        # for the subsection.
-        subsection_arch = customs_arch[customs_arch['subsection']==subsection_id]
-        # Get the processed passenger queue from the Class Data Members list.
-        serviced_passengers_list = self.serviced_passengers
+        
+      # Get the label of the subsection.
+      subsection_id = customs_arch['subsection'].unique()[i]
+      
+      # Subset the master architecture into an architecture just for
+      # for the subsection.
+      subsection_arch = customs_arch[customs_arch['subsection'] == subsection_id]
+      
+      # Get the processed passenger queue from the Class Data Members list.
+      serviced_passengers_list = self.serviced_passengers
 
-        print(subsection_id, sep= " ")
-        # Init a subsection and append to the list.
-        section_list.append(Subsection(subsection_id,
-                                       subsection_arch,
-                                       serviced_passengers_list))
+      # Init a subsection and append to the list.
+      section_list.append(Subsection(subsection_id,
+                                     subsection_arch,
+                                     serviced_passengers_list))
 
     return section_list
-  
 
-  def handle_arrivals(self, plane):
+
+  def handle_arrivals(self, planes):
     """
     Method for handling a plane of arriving passengers.
 
@@ -390,21 +392,33 @@ class Customs(object):
     Returns:
       VOID
     """
-    # Immediately return if plane is null.
-    if plane is None:
-        return
+    # Immediately return if there are no planes to handle.
+    if not planes: return
 
-    # Loop through all the passengers in the plane.
-    while len(plane.plist) > 0:
-        # Loop through all the sections.
-        for section in subsections:
-            # Add Passenger to the correct AssignmentAgent queue.
-            if plane.plist[len(plane.plist)-1].nationality == section.id:
-                section.assignment_agent.queue.append(plane.plist.pop())
-                break
+    # Get the subsection indices for dom/intl queues.
+    id_domestic = 0 if self.subsections[0].id == 'domestic' else 1
+    id_foreign = 0 if self.subsections[0].id == 'foreign' else 1
+
+    # Loop through the list of Planes.
+    for plane in planes:
+
+      # While the plane still has passengers on it...
+      while len(plane.plist) > 0:
+
+        # If national, move to national queue.
+        if plane.plist[-1].nationality == "domestic":
+          self.subsections[id_domestic].assignment_agent.queue.append(
+                                                            plane.plist.pop())
+
+        # If intl, move to intl queue.
+        elif plane.plist[-1].nationality == "foreign":
+          self.subsections[id_foreign].assignment_agent.queue.append(
+                                                            plane.plist.pop())
+
+      print ("ADDED", plane.flight_num, "!", sep = "")
 
 
-  def update_servers(self, server_schedule):
+  def update_servers(self, server_schedule, global_time):
     """
     Updates online/offline status of servers in parallel.
 
@@ -415,13 +429,12 @@ class Customs(object):
       VOID
     """
     # Use the global time to identify the apposite column of the schedule.
-    global GLOBAL_TIME
     time_idx = None
 
     # Loop through the dataframe columns to find the correct column.
     for idx, col in enumerate(server_schedule.columns):
       if re.search('[0-9]-[0-9]', col):
-        if _get_sec(col.split('-')[0] + ":00:00") <= GLOBAL_TIME <= \
+        if _get_sec(col.split('-')[0] + ":00:00") <= global_time <= \
            _get_sec(col.split('-')[1] + ":00:00"):
            time_idx = idx
            break
@@ -433,12 +446,12 @@ class Customs(object):
         # Find the row corresponding to the server in the server schedule.
         matched_entry = server_schedule[server_schedule['id'] == server.id]
         # Extract the status of the server using the global time.
-        online_status = matched_entry.iloc[:,[time_idx]].values[0][0]
+        online_status = matched_entry.iloc[:, [time_idx]].values[0][0]
         # Update the server status.
         if online_status == 1:
-          server.is_serving = True 
+          server.online = True
         else:
-          server.is_serving = False
+          server.online = False
 
 
 class Subsection(object):
@@ -495,7 +508,7 @@ class ParallelServer(object):
                                              serviced_passengers)
     self.has_space_in_a_server_queue = True
     self.queue_size = 0
-    self.min_queue = None
+    self.min_queue = self.server_list[0]
 
   def init_server_list(self, subsection_arch, output_list):
     """
@@ -509,20 +522,20 @@ class ParallelServer(object):
     Returns:
       rtn: a list of initialized ServiceAgent objects.
     """
-    # Metadata of the subsection_arch dataframe.
-    server_type = subsection_arch['subsection'].unique()[0]
-    num_servers = len(subsection_arch)
-    
-    idx = 0
+    # Init a list of servers to return.
     rtn = []
 
     # Loop through all servers in the arch.
-    for idx, row in subsection_arch.iterrows():
+    for _, row in subsection_arch.iterrows():
+
+      # Get the ID of the server and Init a server.
       rtn.append(ServiceAgent(row['id'], output_list))
 
+    # Return the list.
     return rtn
 
-  def service_passengers(self):
+
+  def service_passengers(self, current_time):
     """
     ParallelServer Class member function that services Passenger
     objects by moving them from queues to booths.
@@ -535,12 +548,10 @@ class ParallelServer(object):
     """
     # Loop through all the servers.
     for server in self.server_list:
-      # If there are Passengers in the queue and the booth is empty,
-      # ServiceAgent should begin service on next Passenger in the queue.
-      if len(server.queue) > 0:
-        server.serve()
+      server.serve(current_time)
 
-  def update_min_queue(self):
+
+  def update_state(self):
     """
     ParallelServer Class member function that updates the identity of
     the shortest queue in the block that is still online.
@@ -551,39 +562,32 @@ class ParallelServer(object):
     Returns:
       min_queue: a pointer to a ServiceAgent object
     """
-    # Identify the smallest queue in the server_list.
-    min_queue = None
+    # Start off assuming no space in the queues and no pointer to a
+    # shortest queue.
+    self.min_queue = None
+    self.has_space_in_a_server_queue = False
+    self.queue_size = 0
 
+    # Loop through all the servers.
     for server in self.server_list:
+
+      # If any server has space and is online...
       if len(server.queue) < server.max_queue_size and server.online is True:
-        if min_queue is None:
-          min_queue = server
-        else:
-          if len(server.queue) <= len(min_queue.queue):
-            min_queue = server
 
-    return min_queue
+        # 'Has Space' is True and remains true.
+        if self.has_space_in_a_server_queue is False:
+          self.has_space_in_a_server_queue = True
 
-  def update_has_space_in_a_server_queue(self):
-    """
-    ParallelServer Class function for updating whether or not a Passenger
-    can be moved from the AssignmentAgent queue to a ServiceAgent queue.
+        # First non-full server we come to.
+        if self.min_queue is None:
+          self.min_queue = server
 
-    Args:
-      None
+        # If we already had a non-full queue in hand, compare the present one.
+        elif len(server.queue) < len(self.min_queue.queue):
+          self.min_queue = server
 
-    Returns:
-      has_space: boolean
-    """
-    has_space = False
-
-    for server in self.server_list:
-      # Check for an online server queue smaller than max size.
-      if len(server.queue) < server.max_queue_size and server.online is True:
-        has_space = True
-        break
-
-    return has_space
+      # Increment the count of the parallel server block.
+      self.queue_size += len(server.queue)
 
 
 class AssignmentAgent(object):
@@ -598,7 +602,7 @@ class AssignmentAgent(object):
   Member Functions:
     assign_passengers: moves a Passenger from self.queue to a server.queue
   """
-  def __init__(self, parallel_server_obj):
+  def __init__(self, parallel_server):
     """
     AssignmentAgent Class initialization Member Function.
 
@@ -606,25 +610,36 @@ class AssignmentAgent(object):
       parallel_server_obj: an initialized ParallelServer object
     """
     self.queue = []
-    self.current_passenger = self.queue[0] if len(self.queue) > 0 else None
+    self.parallel_server = parallel_server
 
-  def assign_passengers(self, parallel_server_obj):
+
+  def assign_passengers(self):
     """
-    AssignmentAgent Class member function that moves a passenger to a 
+    AssignmentAgent Class member function that moves a passenger to a
     Service Agent conditional on a set of requirements.
 
     Args:
       parallel_server_obj: a Passenger object
-    
+
     Returns:
       VOID: moves a Passenger object
     """
-    # Check for free service agent and assign passenger accordingly.
-    if parallel_server_obj.has_space_in_a_server_queue is True:
-      tmp = self.assignment_agent.queue.pop(0)
-      self.parallel_server.min_queue.append(tmp)
+    # Update the state of the parallel server after every assignment.
+    self.parallel_server.update_state()
 
-    
+    # While the assignment agent's queue is not empty and there is space
+    # to assign passengers in the parallel block...
+    while self.parallel_server.has_space_in_a_server_queue is True and \
+          len(self.queue) > 0:
+
+      # Pop the first passenger in line and assign to the shortest queue.
+      tmp = self.queue.pop(0)
+      self.parallel_server.min_queue.queue.append(tmp)
+
+      # Update the state of the parallel server after every assignment.
+      self.parallel_server.update_state()
+
+
 class ServiceAgent(object):
   """
   Class for representing a USCBP booth agent.
@@ -655,39 +670,59 @@ class ServiceAgent(object):
     self.is_serving = False
     self.current_passenger = None
     self.output_queue = output_queue
-    self.max_queue_size = None
+    self.max_queue_size = 10
 
-  def serve(self):
+
+  def serve(self, current_time):
     """
-    Process a passenger.
+    Process a passenger conditional on a 5-way else/if control flow.
 
     Args:
-      passenger: a Passenger object to be served
+      current_time: global time in seconds
 
     Returns:
       VOID
     """
-    # We are not serving anyone but there are Passengers in line.
-    if self.is_serving is False:
-        self.current_passenger = self.queue.pop(0)
-        self.is_serving = True
-        passenger.soujourn_time = GLOBAL_TIME + passenger.service_time
+    # If we are offline, do nothing.
+    if self.online is False: return
 
-    # We are serving someone.
-    if self.is_serving is True:
-      # We are in the middle of a transaction:
-      if passenger.soujourn_time > GLOBAL_TIME:
-        # Do nothing (basically wait).
-        pass
+    # If our queue is empty and we are not serving anyone, do nothing.
+    elif len(self.queue) == 0 and self.is_serving is False: return
 
-      # The passenger's transaction is complete.
-      elif passenger.soujourn_time == GLOBAL_TIME:
-        # Finish processing the Passenger.
-        passenger.processed = True
-        self.output_queue.append(passenger)
-        # Update our status.
-        self.is_serving = False
-        self.current_passenger = None
+    # If we are in the middle of a transaction, do nothing.
+    elif self.current_passenger and \
+         self.current_passenger.soujourn_time > current_time: return
+
+    # If we are not serving anyone but there are Passengers in line.
+    elif self.is_serving is False and len(self.queue) > 0:
+
+      # Pull from front of the line.
+      self.current_passenger = self.queue.pop(0)
+
+      # Update our status.
+      self.is_serving = True
+
+      # Adjust the service time of the passenger.
+      self.current_passenger.soujourn_time = current_time + \
+                                             self.current_passenger.service_time
+
+      # Return for good measure.
+      return
+
+    # We are serving a passenger and the passenger's transaction is complete.
+    elif self.current_passenger and \
+         self.current_passenger.soujourn_time == current_time:
+
+      # Finish processing the Passenger.
+      self.current_passenger.processed = True
+      self.output_queue.queue.append(self.current_passenger)
+
+      # Update our status.
+      self.is_serving = False
+      self.current_passenger = None
+
+      # Return for good measure.
+      return
 
 
 class ServicedPassengers(object):
@@ -702,5 +737,5 @@ class ServicedPassengers(object):
       """
       ServicedPassengers initialization member function.
       """
-      self.passengers = []
+      self.queue = []
 
