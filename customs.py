@@ -41,6 +41,7 @@ customs_db = "customs_db.sqlite"
 server_schedule_file = "schedules/sample_server_schedule.csv"
 spd_factor = 10
 
+
 ## ====================================================================
 
 
@@ -56,12 +57,13 @@ def simulate(customs, plane_dispatcher, server_schedule):
   Returns:
     VOID
   """
-  GLOBAL_TIME = _get_sec("07:00:00", spd_factor)
+  GLOBAL_TIME = _get_sec("00:00:00", spd_factor)
 
   while GLOBAL_TIME <= _get_sec("24:00:00", spd_factor):
 
     # Update the servers according to the server schedule.
-    customs.update_servers(server_schedule, GLOBAL_TIME)
+    if GLOBAL_TIME % _get_sec("01:00:00", spd_factor) == 0:
+      customs.update_servers(server_schedule, GLOBAL_TIME)
 
     # Run the plane dispatcher.
     arriving_planes = plane_dispatcher.dispatch_planes(GLOBAL_TIME)
