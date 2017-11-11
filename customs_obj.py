@@ -8,6 +8,7 @@
 ## ====================================================================
 # pylint: disable=bad-indentation,bad-continuation,multiple-statements
 # pylint: disable=invalid-name,trailing-newlines
+
 """
 Objects for simulating throughput of the international arrivals
 customs at JFK airport.  The customs system is modeled through OO
@@ -19,6 +20,7 @@ Usage:
 """
 
 from __future__ import print_function
+
 from collections import deque
 
 import csv
@@ -442,7 +444,7 @@ class Customs(object):
     """
     Customs Class initialization member function.
     """
-    self.serviced_passengers = ServicedPassengers()
+    self.outputs = Outputs()
     self.subsections = self.init_subsections(server_architecture)
 
 
@@ -473,7 +475,7 @@ class Customs(object):
       subsection_arch = customs_arch[customs_arch['subsection'] == subsection_id]
 
       # Get the processed passenger queue from the Class Data Members list.
-      serviced_passengers_list = self.serviced_passengers
+      serviced_passengers_list = self.outputs
 
       # Init a subsection and append to the list.
       section_list.append(Subsection(subsection_id,
@@ -721,6 +723,22 @@ class ParallelServer(object):
         self.queue_size += len(server.queue)
 
 
+  def get_utilization(self, current_time):
+    """
+    Method for getting utilization.
+
+    Args:
+      current_time: simulation time in sim time units
+
+    Returns:
+      VOID
+    """
+
+    # Calculate utilization for all servers.
+    for server in self.server_list:
+      server.get_utilization(current_time)
+
+
 class AssignmentAgent(object):
   """
   Class for representing a "bottleneck" agent in charge of assigning
@@ -800,6 +818,8 @@ class ServiceAgent(object):
     self.current_passenger = None
     self.output_queue = output_queue
     self.max_queue_size = 10
+    self.utilization = 0.0
+    self.utilization_anchor = 0
 
 
   def serve(self, current_time):
@@ -846,7 +866,7 @@ class ServiceAgent(object):
 
       # Finish processing the Passenger.
       self.current_passenger.processed = True
-      self.output_queue.queue.append(self.current_passenger)
+      self.output_queue.serviced_passengers.append(self.current_passenger)
       self.output_queue.passengers_served += 1
 
       # Update our status.
@@ -857,23 +877,77 @@ class ServiceAgent(object):
       return
 
 
-class ServicedPassengers(object):
+  def get_utilization(self, current_time):
+    """
+    Method for calculating server utilization over time.
+
+    Args:
+      current_time: simulation time in sim time units
+
+    Returns:
+      VOID
+    """
+
+    # If the server is not serving, not online, and was not serving this
+    # time period, move the anchor.
+    if (not self.is_serving) and \
+       (not self.online) and \
+       (self.utilization != 0) and \
+       len(self.queue) == 0:
+      self.utilization_anchor = current_time
+
+    # If the server is serving or has people waiting...
+    elif self.is_serving or len(self.queue) != 0:
+      if current_time == self.utilization_anchor:
+        self.utilization = 1
+      else:
+        self.utilization = self.utilization + (
+                                (1-self.utilization) /
+                                ((current_time-self.utilization_anchor)*1.0))
+
+    # If the server is online but is not doing anything...
+    elif self.online and \
+         (not self.is_serving) and \
+         len(self.queue) == 0:
+      if current_time == self.utilization_anchor:
+        self.utilization = 0
+      else:
+        self.utilization = self.utilization + (
+                                (0-self.utilization) /
+                                ((current_time-self.utilization_anchor)*1.0))
+
+    # If we are on the hour and the server has been online,
+    # we flush the results and reset the utilization.
+    if current_time != 0 and \
+       current_time % _get_sec("01:00:00", spd_factor) == 0 and \
+       self.online:
+      self.output_queue.server_statistics.append(
+                                    [self.id,
+                                     self.utilization,
+                                     _get_ttime(current_time, spd_factor)])
+
+      self.utilization = 0
+      self.utilization_anchor = current_time
+
+
+class Outputs(object):
   """
   Class for holding a list of Passenger objects whose transactions
-  have been completed.
+  have been completed and server statistics.
 
   Member Data:
     passengers: python list
   """
   def __init__(self):
     """
-    ServicedPassengers initialization member function.
+    Outputs initialization member function.
     """
-    self.queue = deque()
+    self.serviced_passengers = deque()
     self.passengers_served = 0
+    self.server_statistics = deque()
 
 
-  def write_out(self, output_file, global_time):
+  def write_out_passengers(self, output_file, global_time):
     """
     Writes out the serviced passengers in the deque to a CSV file in
     batches for performance.
@@ -887,7 +961,7 @@ class ServicedPassengers(object):
     """
 
     # Check queue length or sim time.
-    if len(self.queue) >= 1000 or \
+    if len(self.serviced_passengers) >= 1000 or \
        _get_ttime(global_time, spd_factor) == "24:00:00":
 
       # Open a context manager for the file.
@@ -897,9 +971,40 @@ class ServicedPassengers(object):
         writer = csv.writer(the_file, delimiter=",")
 
         # Iterate through the deque and write out.
-        for passenger in self.queue:
+        for passenger in self.serviced_passengers:
           writer.writerow(list(passenger))
 
       # Clear the queue of Passenger objects.
-      self.queue.clear()
+      self.serviced_passengers.clear()
+
+
+  def write_out_servers(self, output_file, global_time):
+    """
+    Writes out the server utilization to a CSV file in batches for
+    performance.
+
+    Args:
+      output_file: file name as string for output
+      global_time: simulation time in sim time units
+
+    Returns:
+      VOID
+    """
+
+    # Check the servers length list.
+    if len(self.server_statistics) >= 1000 or \
+       _get_ttime(global_time, spd_factor) == "24:00:00":
+
+      # Open a context manager for the file.
+      with open(output_file, 'a') as the_file:
+
+        # Initialize a Writer object.
+        writer = csv.writer(the_file, delimiter=",")
+
+        # Iterate through the deque and write out.
+        for server in self.server_statistics:
+          writer.writerow(server)
+
+      # Clear the queue of Server objects.
+      self.server_statistics.clear()
 

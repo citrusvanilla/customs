@@ -8,6 +8,7 @@
 ## ====================================================================
 # pylint: disable=bad-indentation,bad-continuation,multiple-statements
 # pylint: disable=invalid-name,trailing-newlines
+
 """
 A module for simulating throughput of the international arrivals
 customs at JFK airport.
@@ -40,7 +41,8 @@ from customs_obj import _get_sec
 # Macros and files.
 customs_db = "customs_db.sqlite"
 server_schedule_file = "schedules/sample_server_schedule.csv"
-report_file = "passengers_report.csv"
+passengers_report_file = "output/passengers_report.csv"
+servers_report_file = "output/servers_report.csv"
 spd_factor = 10
 
 
@@ -90,9 +92,13 @@ def simulate(customs, plane_dispatcher, server_schedule, speed_factor,
       # Service the Passengers in the ParallelServers.
       section.parallel_server.service_passengers(GLOBAL_TIME)
 
+      # Capture server utilization.
+      section.parallel_server.get_utilization(GLOBAL_TIME)
+
     # Write output.
     if write_output is True:
-      customs.serviced_passengers.write_out(report_file, GLOBAL_TIME)
+      customs.outputs.write_out_passengers(passengers_report_file, GLOBAL_TIME)
+      customs.outputs.write_out_servers(servers_report_file, GLOBAL_TIME)
 
     # Increment global time by one unit of time.
     GLOBAL_TIME += 1
