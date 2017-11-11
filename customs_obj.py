@@ -14,17 +14,21 @@ customs at JFK airport.  The customs system is modeled through OO
 construction.
 
 Usage:
-  Please see the README for how to compile the program and run the model.
+  Please see the README for how to compile the program and run th
+  model.
 """
+
 from __future__ import print_function
 from collections import deque
 
+import csv
 import re
 import sqlite3
 import numpy as np
 
 
 ## ====================================================================
+
 
 # Service Distributions
 service_dist_dom = ("00:00:30", "00:00:45", "00:02:00")
@@ -36,14 +40,18 @@ spd_factor = 10
 # Helper functions
 def _get_sec(time_str, speed_factor):
   """
-  Convert a string in "HH:MM:SS" format to seconds as an integer.
+  Convert a string in "HH:MM:SS" format to seconds as an integer,
+  adjusted by a time resolution ("speed") factor.
 
   Args:
     time_str: a string in "HH:MM:SS" format
+    speed_factor: integer for factor for time resolution
 
   Returns:
     seconds: an integer
   """
+
+  # Split string and convert.
   h, m, s = time_str.split(':')
   seconds = int(h) * 3600 + int(m) * 60 + int(s)
 
@@ -55,14 +63,17 @@ def _get_sec(time_str, speed_factor):
 
 def _get_ttime(seconds, speed_factor):
   """
-  Convert seconds as an integer to "HH:MM:SS" format.
+  Convert seconds as an integer to "HH:MM:SS" format, adjusted for a
+  time resolution ("speed") factor.
 
   Args:
     seconds: an integer
+    speed_factor: an iteger for time resolution
 
   Returns:
     time_str: a string in "HH:MM:SS" format
   """
+
   # Adjust for speed.
   seconds = seconds * speed_factor
 
@@ -78,7 +89,6 @@ def _get_ttime(seconds, speed_factor):
 
   # Concatenate result and return.
   time_str = HH + ":" + MM + ":" + SS
-
   return time_str
 
 
@@ -94,14 +104,14 @@ def sample_from_triangular(service_dist):
     sample: service time in seconds as integer
 
   """
+
+  # Convert from strings.
   lower = _get_sec(service_dist[0], spd_factor)
   mode = _get_sec(service_dist[1], spd_factor)
   upper = _get_sec(service_dist[2], spd_factor)
 
+  # Sample using Numpy triangular, and return.
   sample = int(np.random.triangular(lower, mode, upper))
-
-  #sample = 
-
   return sample
 
 
@@ -115,24 +125,65 @@ class PlaneDispatcher(object):
   instantiated only one per simulation.
 
   Member Data:
-    schedule: holds a pandas dataframe of arrivals and passenger details
+    connection: initialized connection to sqlite database
+    cursor: initialized cursor for querying sqlite database
+    intl_arrival_dict: dictionary with arrival times as keys and plane
+                       ids as values
+    intl_arrival_times: a set of unique arrival times of international
+                        arrivals
     plane_count: simple integer count of planes initialized
     passenger_count: simple integer count of passengers initialized
 
   Member Functions:
     dispatch_plane: returns initialized planes if simulation time
                     matches an arrival.
+    get_intl_arrivals: gets a dict of international arrival times and
+                       plane ids from a sqlite database
+    __del__: overwritten destroyer function to close sqlite connection
   """
+
   def __init__(self, sqlite_database):
     """
     PlaneDispatcher must be instantiated with an arrivals schedule
-    whose format is specified in the README.  Counts are set to zero.
+    whose format is specified in the README.
     """
     self.connection = sqlite3.connect(sqlite_database)
     self.cursor = self.connection.cursor()
-    #self.schedule = arrival_schedule
+    self.intl_arrival_dict = self.get_intl_arrivals()
+    self.intl_arrival_times = set(self.intl_arrival_dict.keys())
     self.plane_count = 0
     self.passenger_count = 0
+
+
+  def get_intl_arrivals(self):
+    """
+    Returns a dict of unique international arrivals stored as time/id
+    values.
+
+    Args:
+      None
+
+    Returns:
+      dic: a python dictionary
+    """
+
+    # Fetch international arrival times from database.
+    arrival_id_and_times = self.cursor.execute(
+                                'SELECT arrivals.arrival_time, arrivals.id '
+                                  'FROM arrivals LEFT JOIN airports '
+                                  'ON arrivals.airport_code = airports.code '
+                                  'WHERE arrivals.code_share = \'\''
+                                  'AND airports.country != \"United States\";')\
+                                .fetchall()
+
+    # Dict the results and return.
+    dic = {}
+    for arrival in arrival_id_and_times:
+      if arrival[0] in dic:
+        dic[arrival[0]].append(arrival[1])
+      else:
+        dic[arrival[0]] = [arrival[1]]
+    return dic
 
 
   def dispatch_planes(self, global_time):
@@ -141,28 +192,32 @@ class PlaneDispatcher(object):
     plane on schedule.
 
     Args:
-      global_time: simulation time in seconds.
+      global_time: simulation time in simulation time units.
 
     Returns:
-      new_plane: a Plane object
+      planes: a list of instantiated Plane objects
     """
+
     # Init a list to hold the plane objects.
     planes = []
 
-    # Query database for a potential international arrivals.
-    arrivals = self.cursor.execute('SELECT arrivals.id, '
-                                       'arrivals.origin, '
-                                       'arrivals.airport_code, '
-                                       'arrivals.arrival_time, '
-                                       'arrivals.airline, '
-                                       'arrivals.flight_num, '
-                                       'arrivals.terminal '
-                                   'FROM arrivals LEFT JOIN airports '
-                                   'ON arrivals.airport_code = airports.code '
-                                   'WHERE arrivals.code_share = \'\' '
-                                   'AND arrivals.arrival_time = \'{time}\' '
-                                   'AND airports.country != \"United States\";'\
-                    .format(time=_get_ttime(global_time, spd_factor))).fetchall()
+    # If a plane is not due, return empty list immediately.
+    if _get_ttime(global_time, spd_factor) not in self.intl_arrival_times:
+      return planes
+
+    # Query dictionary for international arrival plane ids.
+    planes_list = self.intl_arrival_dict[_get_ttime(global_time, spd_factor)]
+
+    # Build SQL statement.
+    sql = ('SELECT id, origin, airport_code, arrival_time, airline, '
+              'flight_num, terminal '
+            'FROM arrivals '
+            'WHERE id in (%s);')
+    in_p = ', '.join(map(lambda x: '?', planes_list))
+    sql = sql % in_p
+
+    # Execute SQL statement to obtain arrivals.
+    arrivals = self.cursor.execute(sql, planes_list).fetchall()
 
     # For each arrival, init a new Plane object.
     for arrival in arrivals:
@@ -202,8 +257,17 @@ class PlaneDispatcher(object):
 
   def __del__(self):
     '''
-    Overwrite default destroyer method.
+    Overwrites default destroyer method to close the sqlite database
+    connection.
+
+    Args:
+      None
+
+    Returns:
+      VOID
     '''
+
+    # Close the connection.
     self.connection.close()
 
 
@@ -212,19 +276,21 @@ class Plane(object):
   Class representing an arriving Plane.
 
   Member Data:
-    self.id = plane_id
-    self.origin = origin
-    sefl.airport_code = airport_code
-    self.arrival_time = arrival_time
-    self.airline = airline
-    self.flight_num = flight_num
-    self.terminal = terminal
-    self.plist = self.init_plist(plist)
+    id: ID of plane as a string
+    origin: origin of plane as a string
+    airport_code: origin airport code or plane as a string
+    arrival_time: arrival time of the plane as a string in HH:MM:SS
+                  format
+    airline: airline carrier of the plane as string
+    flight_num: flight number of the plane as a string
+    terminal: arrival terminal of the plane as a string
+    plist: passenger manifest of the plane as a python list
 
   Member Fuctions:
     init_plist: initializes a list of passengers upon instantiation
                 of the Plane object
   """
+
   def __init__(self, plane_id, origin, airport_code, arrival_time, airline,
                flight_num, terminal, passenger_list):
     """
@@ -248,12 +314,13 @@ class Plane(object):
     objects.
 
     Args:
-      plane_series: a pandas series
-      global_time: simluation time in seconds
+      passenger_list: a list of passengers and their attributes
+                      represented as tuples
 
     Returns:
-      rtn: a list of Passenger objects.
+      plist: a list of initialized Passenger objects.
     """
+
     # Init empty list to hold Passenger objects.
     plist = []
 
@@ -288,18 +355,24 @@ class Passenger(object):
   Class to represent a passenger.
 
   Member Data:
-    id = unique sequential integer id
+    id: numeric id of passenger as string
+    flight_num: flight number of the passenger as string
+    arrival_time: arrival time of the passenger as string in HH:MM:SS
+    first_name: first name of the passenger as string
+    last_name: last name of the passenger as string
+    birthdate: birthdate of the passenger as string
     nationality = foreign/domestic designation
     enque_time = time of arrival to customs
     soujourn_time = total time in the system
     service_time = time of service by service agent
-    conntect_flight = boolen for having a connecting conntect_flight
+    conntect_flight = boolean for having a connecting conntect_flight
     processed = whether or not the passenger has been serviced_passengers
 
   Member Functions:
-    init_id: initialized id member with unique identifier.
     init_service_time: update function to indicate that service has begun.
+    __iter__: overwritten iteration behavior for passenger class
   """
+
   def __init__(self, pid, flight_num, arrival_time, first_name, last_name,
                birthdate, nationality):
     '''
@@ -322,11 +395,29 @@ class Passenger(object):
   def init_service_time(self):
     """
     Generate a random service time from a passed distribution.
+
+    Args:
+      None
+
+    Returns:
+      VOID
     """
+
     if self.nationality == "domestic":
       return sample_from_triangular(service_dist_dom)
     elif self.nationality == "foreign":
       return sample_from_triangular(service_dist_intl)
+
+
+  def __iter__(self):
+    """
+    Define iterable behavior of the Passenger class.
+    """
+
+    return iter([self.id, self.id, self.flight_num, self.arrival_time,
+                 self.first_name, self.last_name, self.birthdate,
+                 self.nationality, self.enque_time, self.soujourn_time,
+                 self.service_time, self.connect_flight, self.processed])
 
 
 ## ====================================================================
@@ -338,20 +429,18 @@ class Customs(object):
 
   Member Data:
     serviced_passengers: a class that holds all processed passengers
-    subsections: a list of subsections containing parallel servers
+    subsections: a list of subsections containing parallel servers and
+                 assignment agents/servers
 
   Member Functions:
     init_subsections: initializes list of Subsections objects
     handle_arrivals: accepts Plane objects and fills queues with Passengers
     update_servers: updates individual servers online/offline statuses
   """
+
   def __init__(self, server_architecture):
     """
     Customs Class initialization member function.
-
-    Args:
-      server_architecture: a pandas dataframe representing the
-                           architecture of the servers
     """
     self.serviced_passengers = ServicedPassengers()
     self.subsections = self.init_subsections(server_architecture)
@@ -375,14 +464,14 @@ class Customs(object):
 
     # Initialize each Subsection Class with a loop.
     for i in range(num_subsections):
-        
+
       # Get the label of the subsection.
       subsection_id = customs_arch['subsection'].unique()[i]
-      
+
       # Subset the master architecture into an architecture just for
       # for the subsection.
       subsection_arch = customs_arch[customs_arch['subsection'] == subsection_id]
-      
+
       # Get the processed passenger queue from the Class Data Members list.
       serviced_passengers_list = self.serviced_passengers
 
@@ -396,10 +485,10 @@ class Customs(object):
 
   def handle_arrivals(self, planes):
     """
-    Method for handling a plane of arriving passengers.
+    Method for handling a list of planes of arriving passengers.
 
     Args:
-      plane: an initialized Plane object
+      planes: a list of initialized Plane objects
 
     Returns:
       VOID
@@ -414,7 +503,7 @@ class Customs(object):
     # Loop through the list of Planes.
     for plane in planes:
       print ("+ Added ", len(plane.plist), " passengers from flight ",
-             plane.flight_num, sep = "")
+             plane.flight_num, sep="")
 
       # While the plane still has passengers on it...
       while len(plane.plist) > 0:
@@ -436,29 +525,45 @@ class Customs(object):
 
     Args:
       server_schedule: a Pandas dataframe
+      global_time: simulation time in simulation time units
 
     Returns:
       VOID
     """
+
+    # If we are not on an hour, we skip.
+    if global_time % _get_sec("01:00:00", spd_factor) != 0: return
+
     # Use the global time to identify the apposite column of the schedule.
     time_idx = None
 
-    # Loop through the dataframe columns to find the correct column.
+    # Loop through the server schedule columns to find the correct column.
     for idx, col in enumerate(server_schedule.columns):
+
+      # Ensures the column names of the server schedule are formatted as:
+      # "0-1", "1-2", ..., "23-24"
       if re.search('[0-9]-[0-9]', col):
-        if _get_sec(col.split('-')[0] + ":00:00", spd_factor) <= global_time <= \
+
+        # Finds the column in the server schedule that corresponds
+        # with the global time and stores that index.
+        if _get_sec(col.split('-')[0] + ":00:00", spd_factor) <= global_time <=\
            _get_sec(col.split('-')[1] + ":00:00", spd_factor):
-           time_idx = idx
-           break
+
+          time_idx = idx
+          break
 
     # Loop through all subsections.parallel_server.server_list:
     for section in self.subsections:
+
       # Loop through every server in the server list.
       for server in section.parallel_server.server_list:
+
         # Find the row corresponding to the server in the server schedule.
         matched_entry = server_schedule[server_schedule['id'] == server.id]
-        # Extract the status of the server using the global time.
+
+        # Extract the status of the server using the stored index.
         online_status = matched_entry.iloc[:, [time_idx]].values[0][0]
+
         # Update the server status.
         if online_status == 1:
           server.online = True
@@ -508,6 +613,7 @@ class ParallelServer(object):
     update_min_queue: updates the identity of the smallest queue
     update_has_space_in_a_server_queue:
   """
+
   def __init__(self, subsection_arch, serviced_passengers):
     """
     ParallelServer Class initialization member function.
@@ -521,6 +627,8 @@ class ParallelServer(object):
     self.has_space_in_a_server_queue = True
     self.queue_size = 0
     self.min_queue = self.server_list[0]
+    self.online_server_count = 0
+
 
   def init_server_list(self, subsection_arch, output_list):
     """
@@ -534,6 +642,7 @@ class ParallelServer(object):
     Returns:
       rtn: a list of initialized ServiceAgent objects.
     """
+
     # Init a list of servers to return.
     rtn = []
 
@@ -557,6 +666,7 @@ class ParallelServer(object):
 
     Returns:
       VOID
+
     """
     # Loop through all the servers.
     for server in self.server_list:
@@ -565,41 +675,50 @@ class ParallelServer(object):
 
   def update_state(self):
     """
-    ParallelServer Class member function that updates the identity of
-    the shortest queue in the block that is still online.
+    ParallelServer Class member function that updates the statuses of
+    the servers in the Parallel server block.
 
     Args:
       None
 
     Returns:
-      min_queue: a pointer to a ServiceAgent object
+      VOID
     """
+
     # Start off assuming no space in the queues and no pointer to a
     # shortest queue.
     self.min_queue = None
     self.has_space_in_a_server_queue = False
     self.queue_size = 0
+    self.online_server_count = 0
 
     # Loop through all the servers.
     for server in self.server_list:
 
-      # If any server has space and is online...
-      if len(server.queue) < server.max_queue_size and server.online is True:
+      # If server is online....
+      if server.online is True:
 
-        # 'Has Space' is True and remains true.
-        if self.has_space_in_a_server_queue is False:
-          self.has_space_in_a_server_queue = True
+        # Increment count of online servers
+        self.online_server_count += 1
 
-        # First non-full server we come to.
-        if self.min_queue is None:
-          self.min_queue = server
+        # If any server has space...
+        if len(server.queue) < server.max_queue_size:
 
-        # If we already had a non-full queue in hand, compare the present one.
-        elif len(server.queue) < len(self.min_queue.queue):
-          self.min_queue = server
+          # 'Has Space' is True and remains true.
+          if self.has_space_in_a_server_queue is False:
+            self.has_space_in_a_server_queue = True
 
-      # Increment the count of the parallel server block.
-      self.queue_size += len(server.queue)
+          # First non-full server we come to.
+          if self.min_queue is None:
+            self.min_queue = server
+
+          # If we already had a non-full queue in hand,
+          # compare it to the present one.
+          elif len(server.queue) < len(self.min_queue.queue):
+            self.min_queue = server
+
+        # Increment the count of the parallel server block.
+        self.queue_size += len(server.queue)
 
 
 class AssignmentAgent(object):
@@ -617,9 +736,6 @@ class AssignmentAgent(object):
   def __init__(self, parallel_server):
     """
     AssignmentAgent Class initialization Member Function.
-
-    Args:
-      parallel_server_obj: an initialized ParallelServer object
     """
     self.queue = deque()
     self.parallel_server = parallel_server
@@ -636,6 +752,7 @@ class AssignmentAgent(object):
     Returns:
       VOID: moves a Passenger object
     """
+
     # Update the state of the parallel server after every assignment.
     self.parallel_server.update_state()
 
@@ -691,10 +808,12 @@ class ServiceAgent(object):
 
     Args:
       current_time: global time in seconds
+      write_output: boolean indicating desire to write output to csv.
 
     Returns:
       VOID
     """
+
     # If we are offline, do nothing.
     if self.online is False: return
 
@@ -728,6 +847,7 @@ class ServiceAgent(object):
       # Finish processing the Passenger.
       self.current_passenger.processed = True
       self.output_queue.queue.append(self.current_passenger)
+      self.output_queue.passengers_served += 1
 
       # Update our status.
       self.is_serving = False
@@ -738,16 +858,48 @@ class ServiceAgent(object):
 
 
 class ServicedPassengers(object):
-    """
-    Class for holding a list of Passenger objects whose transactions
-    have been completed.
+  """
+  Class for holding a list of Passenger objects whose transactions
+  have been completed.
 
-    Member Data:
-      passengers: python list
+  Member Data:
+    passengers: python list
+  """
+  def __init__(self):
     """
-    def __init__(self):
-      """
-      ServicedPassengers initialization member function.
-      """
-      self.queue = deque()
+    ServicedPassengers initialization member function.
+    """
+    self.queue = deque()
+    self.passengers_served = 0
+
+
+  def write_out(self, output_file, global_time):
+    """
+    Writes out the serviced passengers in the deque to a CSV file in
+    batches for performance.
+
+    Args:
+      output_file: file name as string for output
+      global_time: simulation time in sim time units
+
+    Returns:
+      VOID
+    """
+
+    # Check queue length or sim time.
+    if len(self.queue) >= 1000 or \
+       _get_ttime(global_time, spd_factor) == "24:00:00":
+
+      # Open a context manager for the file.
+      with open(output_file, 'a') as the_file:
+
+        # Initialize a Writer object.
+        writer = csv.writer(the_file, delimiter=",")
+
+        # Iterate through the deque and write out.
+        for passenger in self.queue:
+          writer.writerow(list(passenger))
+
+      # Clear the queue of Passenger objects.
+      self.queue.clear()
 
