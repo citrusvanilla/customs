@@ -27,10 +27,15 @@ import csv
 import re
 import sqlite3
 import numpy as np
+import pandas as pd
 
 
 ## ====================================================================
 
+
+# Hourly timestamps (for output)
+hourly_timestamps = ["0" + str(i) + ":00:00" for i in range(0,10)] + \
+                    [str(i) + ":00:00" for i in range(10,24)]
 
 # Service Distributions
 service_dist_dom = ("00:00:30", "00:00:45", "00:02:00")
@@ -188,13 +193,13 @@ class PlaneDispatcher(object):
     return dic
 
 
-  def dispatch_planes(self, global_time):
+  def dispatch_planes(self, current_time):
     """
     PlaneDispatcher class method for initializing and returning a new
     plane on schedule.
 
     Args:
-      global_time: simulation time in simulation time units.
+      current_time: simulation time in simulation time units.
 
     Returns:
       planes: a list of instantiated Plane objects
@@ -204,11 +209,11 @@ class PlaneDispatcher(object):
     planes = []
 
     # If a plane is not due, return empty list immediately.
-    if _get_ttime(global_time, spd_factor) not in self.intl_arrival_times:
+    if _get_ttime(current_time, spd_factor) not in self.intl_arrival_times:
       return planes
 
     # Query dictionary for international arrival plane ids.
-    planes_list = self.intl_arrival_dict[_get_ttime(global_time, spd_factor)]
+    planes_list = self.intl_arrival_dict[_get_ttime(current_time, spd_factor)]
 
     # Build SQL statement.
     sql = ('SELECT id, origin, airport_code, arrival_time, airline, '
@@ -365,7 +370,7 @@ class Passenger(object):
     birthdate: birthdate of the passenger as string
     nationality = foreign/domestic designation
     enque_time = time of arrival to customs
-    soujourn_time = total time in the system
+    departure_time = time of departure
     service_time = time of service by service agent
     conntect_flight = boolean for having a connecting conntect_flight
     processed = whether or not the passenger has been serviced_passengers
@@ -388,9 +393,9 @@ class Passenger(object):
     self.birthdate = birthdate
     self.nationality = nationality
     self.enque_time = _get_sec(arrival_time, spd_factor)
-    self.soujourn_time = -1
+    self.departure_time = -1
     self.service_time = self.init_service_time()
-    self.connect_flight = False
+    self.connecting_flight = False
     self.processed = False
 
 
@@ -418,8 +423,8 @@ class Passenger(object):
 
     return iter([self.id, self.id, self.flight_num, self.arrival_time,
                  self.first_name, self.last_name, self.birthdate,
-                 self.nationality, self.enque_time, self.soujourn_time,
-                 self.service_time, self.connect_flight, self.processed])
+                 self.nationality, self.enque_time, self.departure_time,
+                 self.service_time, self.connecting_flight, self.processed])
 
 
 ## ====================================================================
@@ -464,6 +469,10 @@ class Customs(object):
     # Identify number of unique subsections in the server arcitecture.
     num_subsections = len(customs_arch['subsection'].unique())
 
+    # Retrieve number of total servers and start an ID counter.
+    num_servers = sum(customs_arch['max'])
+    server_id = 1
+
     # Initialize each Subsection Class with a loop.
     for i in range(num_subsections):
 
@@ -474,12 +483,17 @@ class Customs(object):
       # for the subsection.
       subsection_arch = customs_arch[customs_arch['subsection'] == subsection_id]
 
+      # Get server ID range.
+      server_range = (server_id, server_id + subsection_arch.iloc[0]['max'])
+      server_id = server_id + subsection_arch.iloc[0]['max']
+
       # Get the processed passenger queue from the Class Data Members list.
       serviced_passengers_list = self.outputs
 
       # Init a subsection and append to the list.
       section_list.append(Subsection(subsection_id,
                                      subsection_arch,
+                                     server_range,
                                      serviced_passengers_list))
 
     return section_list
@@ -504,8 +518,6 @@ class Customs(object):
 
     # Loop through the list of Planes.
     for plane in planes:
-      print ("+ Added ", len(plane.plist), " passengers from flight ",
-             plane.flight_num, sep="")
 
       # While the plane still has passengers on it...
       while len(plane.plist) > 0:
@@ -521,56 +533,125 @@ class Customs(object):
                                                             plane.plist.pop())
 
 
-  def update_servers(self, server_schedule, global_time):
+  def update_servers(self, server_schedule, current_time):
     """
     Updates online/offline status of servers in parallel.
 
     Args:
       server_schedule: a Pandas dataframe
-      global_time: simulation time in simulation time units
+      current_time: simulation time in simulation time units
 
     Returns:
       VOID
     """
 
     # If we are not on an hour, we skip.
-    if global_time % _get_sec("01:00:00", spd_factor) != 0: return
+    if current_time % _get_sec("01:00:00", spd_factor) != 0: return
+
+    # If we at the end of the simulation, skip.
+    if current_time == _get_sec("24:00:00", spd_factor): return
 
     # Use the global time to identify the apposite column of the schedule.
     time_idx = None
 
     # Loop through the server schedule columns to find the correct column.
-    for idx, col in enumerate(server_schedule.columns):
+    for idx, i in enumerate(server_schedule.columns):
 
       # Ensures the column names of the server schedule are formatted as:
-      # "0-1", "1-2", ..., "23-24"
-      if re.search('[0-9]-[0-9]', col):
+      # "0", "1", ... "23"...
+      if re.search('[0-9]+', i):
 
         # Finds the column in the server schedule that corresponds
         # with the global time and stores that index.
-        if _get_sec(col.split('-')[0] + ":00:00", spd_factor) <= global_time <=\
-           _get_sec(col.split('-')[1] + ":00:00", spd_factor):
-
+        if _get_sec(i.strip()+ ":00:00", spd_factor) <= current_time < \
+           _get_sec(str(int(i.strip())+1)+ ":00:00", spd_factor) :
           time_idx = idx
           break
 
     # Loop through all subsections.parallel_server.server_list:
     for section in self.subsections:
 
+      # Retrieve the section schedule from the master schedule.
+      schedule = server_schedule[server_schedule['subsection'] == section.id]
+
+      # Retrieve number of online servers for the given time.
+      num_servers = schedule.iloc[0][time_idx]
+
       # Loop through every server in the server list.
-      for server in section.parallel_server.server_list:
+      for counter, server in enumerate(section.parallel_server.server_list):
 
-        # Find the row corresponding to the server in the server schedule.
-        matched_entry = server_schedule[server_schedule['id'] == server.id]
-
-        # Extract the status of the server using the stored index.
-        online_status = matched_entry.iloc[:, [time_idx]].values[0][0]
-
-        # Update the server status.
-        if online_status == 1:
+        if counter < num_servers:
           server.online = True
         else:
           server.online = False
+
+
+  def generate_server_report(self, output_file):
+    """
+    Writes out the server utilization to a CSV file.
+
+    Args:
+      output_file: file name as string for output
+
+    Returns:
+      VOID
+    """
+
+    # Init an empty dataframe to hold the server utilization Series.
+    server_df = pd.DataFrame()
+
+    # Loop through all the sections in the subsections.
+    for section in self.subsections:
+
+      # Loop through all the servers in the secions.
+      for server in section.parallel_server.server_list:
+
+        # Concat the server's utilization series to the dataframe.
+        server_df = pd.concat([server_df, server.utilization_series], axis=1)
+
+    # Write the dataframe to CSV.
+    server_df = server_df.transpose()
+    server_df.to_csv(output_file)
+
+
+  def generate_passenger_report(self, output_file, database):
+    """"""
+    # Delete file recursively.
+    try: os.remove(output_file)
+    except OSError: pass
+
+    # Init connection to database.
+    connection = sqlite3.connect(database)
+    cursor = connection.cursor()
+
+    # Execute summary statistics query.
+    data = cursor.execute(
+              'SELECT arrival_hour, '
+                'nationality, '
+                'count(*) as count, '
+                'avg(wait_time) as wait_time, '
+                'max(wait_time) as max_wait '
+              'FROM '
+                '(SELECT cast(enque_time/\'{hour}\' as int) as arrival_hour, '
+                   'departure_time - enque_time as wait_time, '
+                   'nationality '
+                 'FROM passengers '
+                 'WHERE enque_time is NOT NULL) '
+              'GROUP BY 1, 2;'.format(
+                    hour=_get_sec("01:00:00", spd_factor))).fetchall()
+
+    # Open a context manager for the output file.
+    with open(output_file, 'a') as the_file:
+
+      # Initialize a Writer object.
+      writer = csv.writer(the_file, delimiter=",")
+
+      # Iterate through the deque and write out.
+      for row in data:
+        writer.writerow(
+            list(row)[0:3] + \
+            [int(float(row[3]) / _get_sec("1:00:00",spd_factor) * 60)] + \
+            [int(float(row[4]) / _get_sec("1:00:00",spd_factor) * 60)])
 
 
 class Subsection(object):
@@ -585,7 +666,8 @@ class Subsection(object):
     assignment_agent: an initialized AssignmentAgent object
     parallel_server: an initialized ParallelServer object
   """
-  def __init__(self, subsection_id, subsection_arch, serviced_passengers):
+  def __init__(self, subsection_id, subsection_arch, server_range,
+               serviced_passengers):
     """
     Subsection Class initialization function.
 
@@ -594,7 +676,8 @@ class Subsection(object):
       serviced_passengers: a python list
     """
     self.id = subsection_id
-    self.parallel_server = ParallelServer(subsection_arch, serviced_passengers)
+    self.parallel_server = ParallelServer(subsection_arch, server_range,
+                                          serviced_passengers)
     self.assignment_agent = AssignmentAgent(self.parallel_server)
 
 
@@ -616,7 +699,7 @@ class ParallelServer(object):
     update_has_space_in_a_server_queue:
   """
 
-  def __init__(self, subsection_arch, serviced_passengers):
+  def __init__(self, subsection_arch, server_range, serviced_passengers):
     """
     ParallelServer Class initialization member function.
 
@@ -625,6 +708,7 @@ class ParallelServer(object):
       serviced_passengers: a python list
     """
     self.server_list = self.init_server_list(subsection_arch,
+                                             server_range,
                                              serviced_passengers)
     self.has_space_in_a_server_queue = True
     self.queue_size = 0
@@ -632,7 +716,7 @@ class ParallelServer(object):
     self.online_server_count = 0
 
 
-  def init_server_list(self, subsection_arch, output_list):
+  def init_server_list(self, subsection_arch, server_range, output_list):
     """
     ParallelServer Class member function that initializes a list of
     ServiceAgent objects.
@@ -649,10 +733,10 @@ class ParallelServer(object):
     rtn = []
 
     # Loop through all servers in the arch.
-    for _, row in subsection_arch.iterrows():
+    for i in range(server_range[0], server_range[1]):
 
-      # Get the ID of the server and Init a server.
-      rtn.append(ServiceAgent(row['id'], output_list))
+      # Pass the ID of the server and Init a server.
+      rtn.append(ServiceAgent(str(i), output_list))
 
     # Return the list.
     return rtn
@@ -817,9 +901,12 @@ class ServiceAgent(object):
     self.is_serving = False
     self.current_passenger = None
     self.output_queue = output_queue
-    self.max_queue_size = 10
+    self.max_queue_size = 1
     self.utilization = 0.0
     self.utilization_anchor = 0
+    self.utilization_series = pd.Series(np.nan,
+                                        index=hourly_timestamps,
+                                        name=self.id)
 
 
   def serve(self, current_time):
@@ -835,14 +922,14 @@ class ServiceAgent(object):
     """
 
     # If we are offline, do nothing.
-    if self.online is False: return
+    #if self.online is False: return
 
     # If our queue is empty and we are not serving anyone, do nothing.
-    elif len(self.queue) == 0 and self.is_serving is False: return
+    if len(self.queue) == 0 and self.is_serving is False: return
 
     # If we are in the middle of a transaction, do nothing.
     elif self.current_passenger and \
-         self.current_passenger.soujourn_time > current_time: return
+         self.current_passenger.departure_time > current_time: return
 
     # If we are not serving anyone but there are Passengers in line.
     elif self.is_serving is False and len(self.queue) > 0:
@@ -854,7 +941,7 @@ class ServiceAgent(object):
       self.is_serving = True
 
       # Adjust the service time of the passenger.
-      self.current_passenger.soujourn_time = current_time + \
+      self.current_passenger.departure_time = current_time + \
                                              self.current_passenger.service_time
 
       # Return for good measure.
@@ -862,7 +949,7 @@ class ServiceAgent(object):
 
     # We are serving a passenger and the passenger's transaction is complete.
     elif self.current_passenger and \
-         self.current_passenger.soujourn_time == current_time:
+         self.current_passenger.departure_time == current_time:
 
       # Finish processing the Passenger.
       self.current_passenger.processed = True
@@ -892,7 +979,7 @@ class ServiceAgent(object):
     # time period, move the anchor.
     if (not self.is_serving) and \
        (not self.online) and \
-       (self.utilization != 0) and \
+       (self.utilization == 0) and \
        len(self.queue) == 0:
       self.utilization_anchor = current_time
 
@@ -919,15 +1006,20 @@ class ServiceAgent(object):
     # If we are on the hour and the server has been online,
     # we flush the results and reset the utilization.
     if current_time != 0 and \
-       current_time % _get_sec("01:00:00", spd_factor) == 0 and \
+       (current_time + 1) % _get_sec("01:00:00", spd_factor) == 0 and \
        self.online:
-      self.output_queue.server_statistics.append(
-                                    [self.id,
-                                     self.utilization,
-                                     _get_ttime(current_time, spd_factor)])
+      self.utilization_series[_get_ttime(
+                  current_time + 1 - _get_sec("01:00:00", spd_factor), 
+                  spd_factor)] = self.utilization
+
+
+      #self.output_queue.server_statistics.append(
+      #                              [self.id,
+      #                               self.utilization,
+      #                               _get_ttime(current_time, spd_factor)])
 
       self.utilization = 0
-      self.utilization_anchor = current_time
+      self.utilization_anchor = current_time + 1
 
 
 class Outputs(object):
@@ -947,14 +1039,14 @@ class Outputs(object):
     self.server_statistics = deque()
 
 
-  def write_out_passengers(self, output_file, global_time):
+  def update_passengers(self, database, current_time):
     """
     Writes out the serviced passengers in the deque to a CSV file in
     batches for performance.
 
     Args:
-      output_file: file name as string for output
-      global_time: simulation time in sim time units
+      database: pass
+      current_time: simulation time in sim time units
 
     Returns:
       VOID
@@ -962,30 +1054,54 @@ class Outputs(object):
 
     # Check queue length or sim time.
     if len(self.serviced_passengers) >= 1000 or \
-       _get_ttime(global_time, spd_factor) == "24:00:00":
+       _get_ttime(current_time, spd_factor) == "24:00:00":
+
+      # Open connection to db.
+      connection = sqlite3.connect(database)
+      cursor = connection.cursor()
 
       # Open a context manager for the file.
-      with open(output_file, 'a') as the_file:
+      #with open(output_file, 'a') as the_file:
 
         # Initialize a Writer object.
-        writer = csv.writer(the_file, delimiter=",")
+        #writer = csv.writer(the_file, delimiter=",")
 
-        # Iterate through the deque and write out.
-        for passenger in self.serviced_passengers:
-          writer.writerow(list(passenger))
+      # Iterate through the deque and write out.
+      for passenger in self.serviced_passengers:
+        #writer.writerow(list(passenger))
+
+        cursor.execute('UPDATE passengers ' 
+                         'SET enque_time = \'{enque_time}\','
+                             'departure_time = \'{departure_time}\','
+                             'service_time = \'{service_time}\','
+                             'connecting_flight = \'{connecting_flight}\','
+                             'processed = \'{processed}\''
+                          'WHERE '
+                             'id = \'{id}\';'
+          .format(enque_time=passenger.enque_time,
+                  departure_time=passenger.departure_time,
+                  service_time=passenger.service_time,
+                  connecting_flight=passenger.connecting_flight,
+                  processed=passenger.processed,
+                  id=passenger.id))
 
       # Clear the queue of Passenger objects.
       self.serviced_passengers.clear()
 
+      # Close connection
+      connection.commit()
+      connection.close()
 
-  def write_out_servers(self, output_file, global_time):
+
+
+  def update_servers(self, output_file, current_time):
     """
     Writes out the server utilization to a CSV file in batches for
     performance.
 
     Args:
       output_file: file name as string for output
-      global_time: simulation time in sim time units
+      current_time: simulation time in sim time units
 
     Returns:
       VOID
@@ -993,7 +1109,7 @@ class Outputs(object):
 
     # Check the servers length list.
     if len(self.server_statistics) >= 1000 or \
-       _get_ttime(global_time, spd_factor) == "24:00:00":
+       _get_ttime(current_time, spd_factor) == "24:00:00":
 
       # Open a context manager for the file.
       with open(output_file, 'a') as the_file:

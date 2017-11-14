@@ -41,8 +41,8 @@ from customs_obj import _get_sec
 # Macros and files.
 customs_db = "customs_db.sqlite"
 server_schedule_file = "schedules/sample_server_schedule.csv"
-passengers_report_file = "output/passengers_report.csv"
-servers_report_file = "output/servers_report.csv"
+passenger_report_file = "output/passengers_report.csv"
+server_report_file = "output/servers_report.csv"
 spd_factor = 10
 
 
@@ -95,21 +95,24 @@ def simulate(customs, plane_dispatcher, server_schedule, speed_factor,
       # Capture server utilization.
       section.parallel_server.get_utilization(GLOBAL_TIME)
 
-    # Write output.
-    if write_output is True:
-      customs.outputs.write_out_passengers(passengers_report_file, GLOBAL_TIME)
-      customs.outputs.write_out_servers(servers_report_file, GLOBAL_TIME)
+    # Update passengers
+    customs.outputs.update_passengers(customs_db, GLOBAL_TIME)
 
     # Increment global time by one unit of time.
     GLOBAL_TIME += 1
 
     # Provide status update.
-    if GLOBAL_TIME % (60/speed_factor) == 0:
-      print (GLOBAL_TIME / (60/speed_factor), " mins: ", customs.serviced_passengers.passengers_served,
+    if GLOBAL_TIME % (3600/speed_factor) == 0:
+      print (GLOBAL_TIME / (3600/speed_factor), " hours: ", customs.outputs.passengers_served,
              " passengers serviced.  ", len(customs.subsections[0].assignment_agent.queue) + \
              len(customs.subsections[1].assignment_agent.queue), " passengers in queue. ",
              (customs.subsections[0].parallel_server.online_server_count + customs.subsections[1].parallel_server.online_server_count),
              " total servers online.", sep='')
+
+  # Write Report Files
+  if write_output is True:
+    customs.generate_server_report(server_report_file)
+    customs.generate_passenger_report(passenger_report_file, customs_db)
 
 
 ## ====================================================================

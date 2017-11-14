@@ -41,7 +41,12 @@ passengers_table_create_query = ('CREATE TABLE IF NOT EXISTS passengers ('
                                    'first_name text, '
                                    'last_name text, '
                                    'birthdate text, '
-                                   'nationality text);')
+                                   'nationality text, '
+                                   'enque_time text, '
+                                   'departure_time text, '
+                                   'service_time text, '
+                                   'connecting_flight bool, '
+                                   'processed bool);')
 
 insertion_query = ('INSERT INTO passengers ('
                      'flight_num, '
@@ -102,7 +107,7 @@ def guess_seat_count(plane_list):
 
 def generate_nationality_distribution():
   ''''''
-  return np.random.triangular(0.4,0.5,0.6)
+  return np.random.triangular(0.3,0.4,0.5)
 
 
 def generate_nationality(probability):
