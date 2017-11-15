@@ -26,6 +26,7 @@ Usage:
 
 from __future__ import print_function
 
+import os
 import sys
 
 import pandas as pd
@@ -48,7 +49,7 @@ spd_factor = 10
 ## ====================================================================
 
 
-def simulate(customs, plane_dispatcher, server_schedule, speed_factor, write_output=False):
+def simulate(customs, plane_dispatcher, server_schedule, speed_factor):
   """
   Run Customs Simulations for a number of seconds.
 
@@ -100,16 +101,15 @@ def simulate(customs, plane_dispatcher, server_schedule, speed_factor, write_out
     GLOBAL_TIME += 1
 
     # Provide status update.
-    if GLOBAL_TIME % (3600/speed_factor) == 0:
-      print (GLOBAL_TIME / (3600/speed_factor), " hours: ",
-             customs.outputs.passengers_served, " passengers serviced.  ", sep='')
+    #if GLOBAL_TIME % (3600/speed_factor) == 0:
+    #  print (GLOBAL_TIME / (3600/speed_factor), " hours: ",
+    #         customs.outputs.passengers_served, " passengers serviced.  ", sep='')
 
   # Write Report Files
-  if write_output is True:
-    return customs.generate_report(report_file, customs_db)
+  return customs.generate_report(report_file, customs_db)
 
 
-def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshold):
+def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshold, report_file):
   """"""
 
   # Initialize customs with a full load of servers.
@@ -117,7 +117,7 @@ def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshol
   for hour in server_schedule.columns[2:]:
     server_schedule.iloc[0, server_schedule.columns.get_loc(hour)] = max_val
   customs = Customs(customs_db, server_schedule)
-
+  previous_hour = None
 
 
 
@@ -127,75 +127,141 @@ def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshol
     # Current number of servers.
     num_servers = server_schedule.iloc[0, server_schedule.columns.get_loc(hour)]
 
-    # Simulate to get the wait times.
-    data = simulate(customs, plane_dispatcher, server_schedule, spd_factor, write_output=True)
-    print(data)
-
+    # If there is no activity in the time period, skip forward.
+    # Otherwise, simulate and retrieve the ave_wait time.
+    data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
     if int(hour) not in data['hour'].tolist():
+      customs.clean_up_db()
+      del customs
+      customs = Customs(customs_db, server_schedule)
       continue
 
-    ave_wait = int(data[data['hour'] == int(hour)].iloc[0]['ave_wait'])
-    print (ave_wait >= threshold)
-    print (ave_wait, threshold)
 
+
+    ave_wait = int(data[data['hour'] == int(hour)].iloc[0]['ave_wait'])
+    if int(data[data['hour'] == int("1")].iloc[0]['ave_wait']) > 300: break
+    try:
+      if int(data[data['hour'] == int("20")].iloc[0]['ave_wait']) < 0: break
+    except:
+      pass
+    print(data)
+
+
+
+
+
+
+    # Initialize vars for the optimization.
     greedy_optimized = False
     new_ave_wait = None
 
     while greedy_optimized is False:
 
-      # If the wait time exceeds the threshold, add servers and try again.
+      # If the wait time exceeds the threshold, add servers the the simulation.
       if ave_wait >= threshold:
         num_servers = num_servers + 1
 
-      # If the wait time falls under the threshold, take servers away and try again.
+      # If the wait time falls under the threshold, take servers away.
       else:
         num_servers = num_servers - 1
 
+      # Adjust current and future server counts.
       for hour2 in range(int(hour),24):
         if int(hour2) >= int(hour):
-          server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = num_servers
+          server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = \
+                                                                       num_servers
 
       # Debug
       print ("Average wait for this sim: ", ave_wait, ". Trying ", num_servers, " servers.", sep="")
 
-      # reint customs
+      # Initialize a new simulation with the adjusted server schedule.
       customs.clean_up_db()
       del customs
       customs = Customs(customs_db, server_schedule)
 
-      # Simulate to get the wait times.
-      data = simulate(customs, plane_dispatcher, server_schedule, spd_factor, write_output=True)
+      # Simulate and retrieve average wait time.
+      data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
       new_ave_wait = int(data[data['hour'] == int(hour)].iloc[0]['ave_wait'])
-
-
-
-
 
       # If our new wait time crosses the threshold the right way, break.
       if ave_wait >= threshold and new_ave_wait < threshold:
+        customs.clean_up_db()
+        del customs
+        customs = Customs(customs_db, server_schedule)
         greedy_optimized = True
 
       # If our new wait time crosses the threshold the wrong way,
-      # reset server config and break.
+      # reset server count, customs set-up, and break.
       elif ave_wait < threshold and new_ave_wait >= threshold:
         num_servers = num_servers + 1
         for hour2 in range(int(hour),24):
           if int(hour2) >= int(hour):
-            server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = num_servers
+            server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = \
+                                                                         num_servers
+        customs.clean_up_db()
+        del customs
+        customs = Customs(customs_db, server_schedule)
+
+        # We have to check that the reduction in servers in the current
+        # time period still satisfies time restraints for previous periods.
+        if previous_hour is not None:
+          previous_ave_wait = int(data[data['hour'] == int(previous_hour)].iloc[0]['ave_wait'])
+          while previous_ave_wait >= threshold:
+            print (previous_ave_wait)
+            num_servers = num_servers + 1
+            for hour2 in range(int(hour),24):
+              if int(hour2) >= int(hour):
+                server_schedule.iloc[
+                  0, server_schedule.columns.get_loc(str(hour2))] = num_servers
+            customs.clean_up_db()
+            del customs
+            customs = Customs(customs_db, server_schedule)
+            data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
+            previous_ave_wait = int(data[data['hour'] == int(previous_hour)].iloc[0]['ave_wait'])
+
+        customs.clean_up_db()
+        del customs
+        customs = Customs(customs_db, server_schedule)
         greedy_optimized = True
 
-      # If our new wait time does not cross a threshold, keep trying.
+      # If our new wait time does not cross a threshold, keep iterating.
       else:
         ave_wait = new_ave_wait
         new_ave_wait = None
 
+    # Update pointer to preceeding hour in the simulation.
+    previous_hour = hour
 
+    # Status update.
+    print ("Optimized ", num_servers, " servers in time period ", str(hour),
+           ".", sep="")
 
+  # Write report.
+  # Delete former files recursively.
+  try: os.remove(report_file)
+  except OSError: pass
 
-    print ("Optimized ", num_servers, " servers in time period ", str(hour), ".", sep="")
-
-  # clean-up
   customs.clean_up_db()
+  del customs
+  customs = Customs(customs_db, server_schedule)
+
+  data = simulate(customs,
+                  plane_dispatcher,
+                  server_schedule,
+                  spd_factor)
+
+  data.to_csv(report_file,
+              index=False,
+              columns=["hour",
+                       "type",
+                       "count",
+                       "ave_wait",
+                       "max_wait",
+                       "ave_server_utilization",
+                       "num_servers"])
+
+  # Clean-up.
+  #customs.clean_up_db()
   del customs
 
 
@@ -216,17 +282,14 @@ def main():
   plane_dispatcher = PlaneDispatcher(customs_db)
 
   # Optimize
-  optimize(customs_db, plane_dispatcher, server_schedule, spd_factor, 30)
-
-
-
+  optimize(customs_db, plane_dispatcher, server_schedule, spd_factor, 15, report_file)
 
   # Build customs graph from the schedule.
   #customs = Customs(customs_db, server_schedule)
 
   # Simulate the throughput, and output the data.
-  #simulate(customs, plane_dispatcher, server_schedule, spd_factor, write_output=True)
-
+  #data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
+  #data.to_csv(report_file, index=False, columns=["hour","type","count","ave_wait","max_wait","ave_server_utilization","num_servers"])
   # Clean-up Resources.
   #customs.clean_up_db()
   del plane_dispatcher#, customs

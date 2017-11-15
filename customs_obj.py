@@ -462,9 +462,9 @@ class Customs(object):
 
   def prep_database(self, database):
     """"""
-    self.cursor.execute('ALTER TABLE passengers ADD enque_time text;')
-    self.cursor.execute('ALTER TABLE passengers ADD departure_time text;') 
-    self.cursor.execute('ALTER TABLE passengers ADD service_time text;')
+    self.cursor.execute('ALTER TABLE passengers ADD enque_time INTEGER;')
+    self.cursor.execute('ALTER TABLE passengers ADD departure_time INTEGER;') 
+    self.cursor.execute('ALTER TABLE passengers ADD service_time INTEGER;')
     self.cursor.execute('ALTER TABLE passengers ADD connecting_flight bool;')
     self.cursor.execute('ALTER TABLE passengers ADD processed bool;')
     self.connection.commit()
@@ -611,10 +611,6 @@ class Customs(object):
   def generate_report(self, output_file, database):
     """"""
 
-    # Delete former files recursively.
-    try: os.remove(output_file)
-    except OSError: pass
-
     # Init an empty dataframe to hold the server utilization Series.
     server_df = pd.DataFrame()
 
@@ -632,7 +628,8 @@ class Customs(object):
 
     # Insert into database
     server_df = server_df.transpose()
-    server_df.to_sql('servers', self.connection, if_exists='replace')
+    server_df.to_sql('servers', self.connection, if_exists='replace'
+                    , dtype='real')
 
     # Perform a summary queries.
     server_data = pd.read_sql(
@@ -704,8 +701,6 @@ class Customs(object):
       output_df = pd.concat([output_df, output_row], axis=1)
 
     output_df = output_df.transpose()
-    output_df.to_csv(output_file, index=False, columns=headers)
-
 
     # Clean up
     self.connection.commit()
@@ -714,7 +709,7 @@ class Customs(object):
 
 
   def clean_up_db(self):
-    self.connection.execute('drop table servers;')
+    self.connection.execute('DROP TABLE IF EXISTS servers;')
 
     self.connection.execute('ALTER TABLE passengers RENAME TO tmp_passengers;')
 
