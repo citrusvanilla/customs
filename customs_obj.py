@@ -28,6 +28,7 @@ import re
 import sqlite3
 import numpy as np
 import pandas as pd
+import os
 
 
 ## ====================================================================
@@ -38,8 +39,8 @@ hourly_timestamps = ["0" + str(i) + ":00:00" for i in range(0,10)] + \
                     [str(i) + ":00:00" for i in range(10,24)]
 
 # Service Distributions
-service_dist_dom = ("00:00:30", "00:00:45", "00:02:00")
-service_dist_intl = ("00:00:45", "00:01:00", "00:02:15")
+service_dist_dom = ("00:00:30", "00:01:00", "00:02:00")
+service_dist_intl = ("00:01:00", "00:02:00", "00:04:00")
 
 # Speed up factor
 spd_factor = 10
@@ -177,10 +178,12 @@ class PlaneDispatcher(object):
     # Fetch international arrival times from database.
     arrival_id_and_times = self.cursor.execute(
                                 'SELECT arrivals.arrival_time, arrivals.id '
-                                  'FROM arrivals LEFT JOIN airports '
+                                'FROM arrivals LEFT JOIN airports '
                                   'ON arrivals.airport_code = airports.code '
-                                  'WHERE arrivals.code_share = \'\''
-                                  'AND airports.country != \"United States\";')\
+                                'WHERE arrivals.code_share = \'\' '
+                                  'AND arrivals.terminal = \'4\' '
+                                  'AND airports.country != \"United States\" '
+                                  'AND airports.preclearance != \"true\";')\
                                 .fetchall()
 
     # Dict the results and return.
@@ -445,12 +448,26 @@ class Customs(object):
     update_servers: updates individual servers online/offline statuses
   """
 
-  def __init__(self, server_architecture):
+  def __init__(self, database, server_architecture):
     """
     Customs Class initialization member function.
     """
+        # connection
+    self.connection = sqlite3.connect(database)
+    self.cursor = self.connection.cursor()
     self.outputs = Outputs()
     self.subsections = self.init_subsections(server_architecture)
+    self.prep_database(database)
+
+
+  def prep_database(self, database):
+    """"""
+    self.cursor.execute('ALTER TABLE passengers ADD enque_time text;')
+    self.cursor.execute('ALTER TABLE passengers ADD departure_time text;') 
+    self.cursor.execute('ALTER TABLE passengers ADD service_time text;')
+    self.cursor.execute('ALTER TABLE passengers ADD connecting_flight bool;')
+    self.cursor.execute('ALTER TABLE passengers ADD processed bool;')
+    self.connection.commit()
 
 
   def init_subsections(self, customs_arch):
@@ -513,8 +530,8 @@ class Customs(object):
     if not planes: return
 
     # Get the subsection indices for dom/intl queues.
-    id_domestic = 0 if self.subsections[0].id == 'domestic' else 1
-    id_foreign = 0 if self.subsections[0].id == 'foreign' else 1
+    #id_domestic = 0 if self.subsections[0].id == 'domestic' else 1
+    #id_foreign = 0 if self.subsections[0].id == 'foreign' else 1
 
     # Loop through the list of Planes.
     for plane in planes:
@@ -522,15 +539,20 @@ class Customs(object):
       # While the plane still has passengers on it...
       while len(plane.plist) > 0:
 
-        # If national, move to national queue.
-        if plane.plist[-1].nationality == "domestic":
-          self.subsections[id_domestic].assignment_agent.queue.append(
-                                                            plane.plist.pop())
+        passenger = plane.plist.pop()
 
-        # If intl, move to intl queue.
-        elif plane.plist[-1].nationality == "foreign":
-          self.subsections[id_foreign].assignment_agent.queue.append(
-                                                            plane.plist.pop())
+        for subsection in self.subsections:
+  
+          # If national, move to national queue.
+          if passenger.nationality == subsection.id :
+            subsection.assignment_agent.queue.append(passenger)
+            break
+            
+
+          # If intl, move to intl queue.
+          #elif plane.plist[-1].nationality == "foreign":
+          #  self.subsections[id_foreign].assignment_agent.queue.append(
+          #                                                    plane.plist.pop())
 
 
   def update_servers(self, server_schedule, current_time):
@@ -586,16 +608,12 @@ class Customs(object):
           server.online = False
 
 
-  def generate_server_report(self, output_file):
-    """
-    Writes out the server utilization to a CSV file.
+  def generate_report(self, output_file, database):
+    """"""
 
-    Args:
-      output_file: file name as string for output
-
-    Returns:
-      VOID
-    """
+    # Delete former files recursively.
+    try: os.remove(output_file)
+    except OSError: pass
 
     # Init an empty dataframe to hold the server utilization Series.
     server_df = pd.DataFrame()
@@ -606,26 +624,49 @@ class Customs(object):
       # Loop through all the servers in the secions.
       for server in section.parallel_server.server_list:
 
+        # Add the server type to the Pd series.
+        server.utilization_series.set_value('type', server.type)
+
         # Concat the server's utilization series to the dataframe.
         server_df = pd.concat([server_df, server.utilization_series], axis=1)
 
-    # Write the dataframe to CSV.
+    # Insert into database
     server_df = server_df.transpose()
-    server_df.to_csv(output_file)
+    server_df.to_sql('servers', self.connection, if_exists='replace')
 
+    # Perform a summary queries.
+    server_data = pd.read_sql(
+              'SELECT type, avg("00:00:00") as \'0\', avg("01:00:00") as \'1\', '
+                 'avg("02:00:00") as \'2\', avg("03:00:00") as \'3\', '
+                 'avg("04:00:00") as \'4\', avg("05:00:00") as \'5\', '
+                 'avg("06:00:00") as \'6\', avg("07:00:00") as \'7\', '
+                 'avg("08:00:00") as \'8\', avg("09:00:00") as \'9\', '
+                 'avg("10:00:00") as \'10\', avg("11:00:00") as \'11\', '
+                 'avg("12:00:00") as \'12\', avg("13:00:00") as \'13\', '
+                 'avg("14:00:00") as \'14\', avg("15:00:00") as \'15\', '
+                 'avg("16:00:00") as \'16\', avg("17:00:00") as \'17\', '
+                 'avg("18:00:00") as \'18\', avg("19:00:00") as \'19\', '
+                 'avg("20:00:00") as \'20\', avg("21:00:00") as \'21\', '
+                 'avg("22:00:00") as \'22\', avg("23:00:00") as \'23\' '
+              'FROM servers group by type;', self.connection)
 
-  def generate_passenger_report(self, output_file, database):
-    """"""
-    # Delete file recursively.
-    try: os.remove(output_file)
-    except OSError: pass
-
-    # Init connection to database.
-    connection = sqlite3.connect(database)
-    cursor = connection.cursor()
-
-    # Execute summary statistics query.
-    data = cursor.execute(
+    server_counts = pd.read_sql(
+            'SELECT type, '
+               'count("00:00:00") as \'0\', count("01:00:00") as \'1\', '
+               'count("02:00:00") as \'2\', count("03:00:00") as \'3\', '
+               'count("04:00:00") as \'4\', count("05:00:00") as \'5\', '
+               'count("06:00:00") as \'6\', count("07:00:00") as \'7\', '
+               'count("08:00:00") as \'8\', count("09:00:00") as \'9\', '
+               'count("10:00:00") as \'10\', count("11:00:00") as \'11\', '
+               'count("12:00:00") as \'12\', count("13:00:00") as \'13\', '
+               'count("14:00:00") as \'14\', count("15:00:00") as \'15\', '
+               'count("16:00:00") as \'16\', count("17:00:00") as \'17\', '
+               'count("18:00:00") as \'18\', count("19:00:00") as \'19\', '
+               'count("20:00:00") as \'20\', count("21:00:00") as \'21\', '
+               'count("22:00:00") as \'22\', count("23:00:00") as \'23\' '
+            'FROM servers group by type;', self.connection)
+    
+    passenger_data = self.cursor.execute(
               'SELECT arrival_hour, '
                 'nationality, '
                 'count(*) as count, '
@@ -640,18 +681,68 @@ class Customs(object):
               'GROUP BY 1, 2;'.format(
                     hour=_get_sec("01:00:00", spd_factor))).fetchall()
 
-    # Open a context manager for the output file.
-    with open(output_file, 'a') as the_file:
+    # Headers
+    headers = ["hour", "type", "count", "ave_wait", "max_wait",
+               "ave_server_utilization", "num_servers"]
+    idx_1 = 0
+    idx_2 = 0
+    output_df = pd.DataFrame()
 
-      # Initialize a Writer object.
-      writer = csv.writer(the_file, delimiter=",")
+    for row in passenger_data:
+      row = list(row)
+      while str(server_data.columns[idx_1]) != str(row[0]): idx_1 += 1
+      while str(server_counts.columns[idx_2]) != str(row[0]): idx_2 += 1
 
-      # Iterate through the deque and write out.
-      for row in data:
-        writer.writerow(
-            list(row)[0:3] + \
-            [int(float(row[3]) / _get_sec("1:00:00",spd_factor) * 60)] + \
-            [int(float(row[4]) / _get_sec("1:00:00",spd_factor) * 60)])
+      output_row = pd.Series(
+         (row[0:3] + \
+         [int(float(row[3]) / _get_sec("1:00:00",spd_factor) * 60)] + \
+         [int(float(row[4]) / _get_sec("1:00:00",spd_factor) * 60)] + \
+         [round(server_data[server_data['type'] == str(row[1])].iloc[0][idx_1],2)] + \
+         [server_counts[server_counts['type'] == str(row[1])].iloc[0][idx_2]]),
+         index=headers)
+
+      output_df = pd.concat([output_df, output_row], axis=1)
+
+    output_df = output_df.transpose()
+    output_df.to_csv(output_file, index=False, columns=headers)
+
+
+    # Clean up
+    self.connection.commit()
+
+    return output_df
+
+
+  def clean_up_db(self):
+    self.connection.execute('drop table servers;')
+
+    self.connection.execute('ALTER TABLE passengers RENAME TO tmp_passengers;')
+
+    self.connection.execute('CREATE TABLE passengers ('
+                                   'id integer PRIMARY KEY, '
+                                   'flight_num text, '
+                                   'first_name text, '
+                                   'last_name text, '
+                                   'birthdate text, '
+                                   'nationality text);')
+
+    self.connection.execute('INSERT INTO passengers '
+                              'SELECT id, '
+                                 'flight_num, '
+                                 'first_name, '
+                                 'last_name, '
+                                 'birthdate, '
+                                 'nationality '
+                              'FROM tmp_passengers;')
+
+    self.connection.execute('DROP TABLE tmp_passengers;')
+
+    self.connection.commit()
+
+
+  def __del__(self):
+    """"""
+    self.connection.close()
 
 
 class Subsection(object):
@@ -676,7 +767,9 @@ class Subsection(object):
       serviced_passengers: a python list
     """
     self.id = subsection_id
-    self.parallel_server = ParallelServer(subsection_arch, server_range,
+    self.parallel_server = ParallelServer(subsection_arch,
+                                          subsection_id,
+                                          server_range,
                                           serviced_passengers)
     self.assignment_agent = AssignmentAgent(self.parallel_server)
 
@@ -699,7 +792,8 @@ class ParallelServer(object):
     update_has_space_in_a_server_queue:
   """
 
-  def __init__(self, subsection_arch, server_range, serviced_passengers):
+  def __init__(self, subsection_arch, subsection_id, server_range,
+               serviced_passengers):
     """
     ParallelServer Class initialization member function.
 
@@ -708,6 +802,7 @@ class ParallelServer(object):
       serviced_passengers: a python list
     """
     self.server_list = self.init_server_list(subsection_arch,
+                                             subsection_id,
                                              server_range,
                                              serviced_passengers)
     self.has_space_in_a_server_queue = True
@@ -716,7 +811,8 @@ class ParallelServer(object):
     self.online_server_count = 0
 
 
-  def init_server_list(self, subsection_arch, server_range, output_list):
+  def init_server_list(self, subsection_arch, subsection_id, server_range,
+                       output_list):
     """
     ParallelServer Class member function that initializes a list of
     ServiceAgent objects.
@@ -736,7 +832,7 @@ class ParallelServer(object):
     for i in range(server_range[0], server_range[1]):
 
       # Pass the ID of the server and Init a server.
-      rtn.append(ServiceAgent(str(i), output_list))
+      rtn.append(ServiceAgent(str(i), subsection_id, output_list))
 
     # Return the list.
     return rtn
@@ -887,7 +983,7 @@ class ServiceAgent(object):
   Member Functions:
     serve: general service functions for completing Passenger transactions.
   """
-  def __init__(self, server_id, output_queue):
+  def __init__(self, server_id, subsection_id, output_queue):
     """
     ServiceAgent Class initialization member function.
 
@@ -897,6 +993,7 @@ class ServiceAgent(object):
     """
     self.online = False
     self.id = server_id
+    self.type = subsection_id
     self.queue = deque()
     self.is_serving = False
     self.current_passenger = None
@@ -1041,8 +1138,7 @@ class Outputs(object):
 
   def update_passengers(self, database, current_time):
     """
-    Writes out the serviced passengers in the deque to a CSV file in
-    batches for performance.
+    Updates passenger service metrics in the database.
 
     Args:
       database: pass
@@ -1059,12 +1155,6 @@ class Outputs(object):
       # Open connection to db.
       connection = sqlite3.connect(database)
       cursor = connection.cursor()
-
-      # Open a context manager for the file.
-      #with open(output_file, 'a') as the_file:
-
-        # Initialize a Writer object.
-        #writer = csv.writer(the_file, delimiter=",")
 
       # Iterate through the deque and write out.
       for passenger in self.serviced_passengers:
@@ -1091,7 +1181,6 @@ class Outputs(object):
       # Close connection
       connection.commit()
       connection.close()
-
 
 
   def update_servers(self, output_file, current_time):
