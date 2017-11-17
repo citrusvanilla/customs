@@ -10,14 +10,14 @@
 # pylint: disable=invalid-name,trailing-newlines
 
 """
-A module for simulating throughput of the international arrivals
-customs at JFK airport.
+A module for optimizing server scheduling for passenger wait time through
+simulating throughput of the international arrivals customs.
 
 Performance:
 
-  System                       | Simulation Time for 24hours
-  ------------------------------------------------------------
-  1 CPU 2.6 GHz Intel Core i5  |       ~13.5 seconds
+            System             | Analog Time for 24hr sim at 10x Speed
+  ---------------------------------------------------------------------
+  1 CPU 2.6 GHz Intel Core i5  |              ~4 seconds
 
 Usage:
   Please see the README for how to compile the program and run the
@@ -28,12 +28,14 @@ from __future__ import print_function
 
 import os
 import sys
+import sqlite3
 
 import pandas as pd
 
 from customs_obj import PlaneDispatcher
 from customs_obj import Customs
 from customs_obj import _get_sec
+from customs_obj import sample_from_triangular
 
 
 ## ====================================================================
@@ -44,12 +46,13 @@ customs_db = "customs_db.sqlite"
 server_schedule_file = "schedules/sample_server_schedule.csv"
 report_file = "output/summary.csv"
 spd_factor = 10
+ave_wait_threshold = 20
 
 
 ## ====================================================================
 
 
-def simulate(customs, plane_dispatcher, server_schedule, speed_factor):
+def simulate(database, plane_dispatcher, server_schedule, speed_factor):
   """
   Run Customs Simulations for a number of seconds.
 
@@ -65,6 +68,8 @@ def simulate(customs, plane_dispatcher, server_schedule, speed_factor):
   Returns:
     VOID
   """
+  # Initialize a Customs object.
+  customs = Customs(database, server_schedule)
 
   # Set the global time in seconds, from a string of HH:MM:SS format.
   GLOBAL_TIME = _get_sec("00:00:00", speed_factor)
@@ -106,122 +111,198 @@ def simulate(customs, plane_dispatcher, server_schedule, speed_factor):
     #         customs.outputs.passengers_served, " passengers serviced.  ", sep='')
 
   # Write Report Files
-  return customs.generate_report(report_file, customs_db)
+  report = customs.generate_report(report_file, customs_db)
+
+  # Clean-up
+  customs.clean_up_db()
+  del customs
+
+  # Return Pandas dataframe.
+  return report
+
+
+def adjust_schedule(schedule, starting_hour, num_servers):
+  """"""
+
+  for hour in range(starting_hour, 24):
+    schedule.iloc[0, schedule.columns.get_loc(str(hour))] = num_servers
+
+
+def init_service_times(database):
+  """"""
+  # Define service Distributions
+  service_dist_dom = ("00:00:30", "00:01:00", "00:02:00")
+  service_dist_intl = ("00:01:00", "00:02:00", "00:04:00")
+
+  # Open connection to DB
+  connection = sqlite3.connect(database)
+  cursor = connection.cursor()
+
+  # Insert a service time attribute.
+  cursor.execute('ALTER TABLE passengers ADD service_time INTEGER;')
+
+  # Grab a list of ids.
+  ids = cursor.execute('SELECT id FROM passengers;').fetchall()
+
+  # Loop through every passenger and update.
+  for passenger_id in ids:
+    cursor.execute('UPDATE passengers '
+                       'SET service_time = '
+                   'CASE WHEN nationality = \'domestic\' '
+                       'THEN \'{time_dom}\' '
+                       'ELSE \'{time_for}\' END '
+                   'WHERE id = \'{id}\';'\
+                   .format(time_dom=sample_from_triangular(service_dist_dom), 
+                           time_for=sample_from_triangular(service_dist_intl),
+                           id=passenger_id[0])) 
+
+  # Commit and close.
+  connection.commit()
+  connection.close()
 
 
 def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshold, report_file):
   """"""
 
-  # Initialize customs with a full load of servers.
+  # Define momentum value.
+  momentum = 3
+
+  # Adjust schedule to have a max load of servers.
   max_val = server_schedule.iloc[0, server_schedule.columns.get_loc('max')]
-  for hour in server_schedule.columns[2:]:
-    server_schedule.iloc[0, server_schedule.columns.get_loc(hour)] = max_val
-  customs = Customs(customs_db, server_schedule)
+  adjust_schedule(server_schedule, 0, max_val)
+
+  # Initialize a pointer to keep track of the previous period.
   previous_hour = None
 
-
-
-  # Start the greedy search algorithm.
-  for hour in server_schedule.columns[2:]:
+  # Start the greedy search algorithm by looping through all hours of the sim.
+  for hour in range(0, 24):
     
-    # Current number of servers.
-    num_servers = server_schedule.iloc[0, server_schedule.columns.get_loc(hour)]
+    # Retrieve current number of scheduled servers.
+    num_servers = server_schedule.iloc[
+                                0, server_schedule.columns.get_loc(str(hour))]
+
+    # Simulate and retrieve sim report.
+    data = simulate(database, plane_dispatcher, server_schedule, spd_factor)
 
     # If there is no activity in the time period, skip forward.
-    # Otherwise, simulate and retrieve the ave_wait time.
-    data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
-    if int(hour) not in data['hour'].tolist():
-      customs.clean_up_db()
-      del customs
-      customs = Customs(customs_db, server_schedule)
-      continue
+    if hour not in data['hour'].tolist(): continue
 
+    # Retrieve average wait time for the current period.
+    ave_wait = int(data[data['hour'] == hour].iloc[0]['ave_wait'])
 
-
-    ave_wait = int(data[data['hour'] == int(hour)].iloc[0]['ave_wait'])
-    if int(data[data['hour'] == int("1")].iloc[0]['ave_wait']) > 300: break
-    try:
-      if int(data[data['hour'] == int("20")].iloc[0]['ave_wait']) < 0: break
-    except:
-      pass
+    # Debug
+    print("==========================================================")
+    print("Current server schedule:")
     print(data)
+    print("==========================================================")
 
-
-
-
-
-
-    # Initialize vars for the optimization.
+    # Initialize vars for the optimization loop.
     greedy_optimized = False
     new_ave_wait = None
 
+    # Optimization loop.
     while greedy_optimized is False:
 
       # If the wait time exceeds the threshold, add servers the the simulation.
-      if ave_wait >= threshold:
-        num_servers = num_servers + 1
-
       # If the wait time falls under the threshold, take servers away.
+      if ave_wait >= threshold:
+        print ("Average wait in hour ", hour, " for ", num_servers,
+             " servers this sim: ", ave_wait, " minutes.", sep="")
+        num_servers = num_servers + momentum
+        if num_servers > max_val:
+          num_servers = max_val
+        
+        print("Trying ",num_servers, " servers instead.", sep="")
+
       else:
-        num_servers = num_servers - 1
+        print ("Average wait in hour ", hour, " for ", num_servers,
+             " servers this sim: ", ave_wait, " minutes.", sep="")
+        num_servers = num_servers - momentum
+        if num_servers < 1:
+          num_servers = 1
+        
+        print("Trying ",num_servers, " servers instead.", sep="")
+        
 
       # Adjust current and future server counts.
-      for hour2 in range(int(hour),24):
-        if int(hour2) >= int(hour):
-          server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = \
-                                                                       num_servers
-
-      # Debug
-      print ("Average wait for this sim: ", ave_wait, ". Trying ", num_servers, " servers.", sep="")
-
-      # Initialize a new simulation with the adjusted server schedule.
-      customs.clean_up_db()
-      del customs
-      customs = Customs(customs_db, server_schedule)
+      adjust_schedule(server_schedule, hour, num_servers)
 
       # Simulate and retrieve average wait time.
-      data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
-      new_ave_wait = int(data[data['hour'] == int(hour)].iloc[0]['ave_wait'])
+      data = simulate(database, plane_dispatcher, server_schedule, spd_factor)
+      new_ave_wait = int(data[data['hour'] == hour].iloc[0]['ave_wait'])
 
       # If our new wait time crosses the threshold the right way, break.
       if ave_wait >= threshold and new_ave_wait < threshold:
-        customs.clean_up_db()
-        del customs
-        customs = Customs(customs_db, server_schedule)
+
+        for i in range(momentum - 1):
+
+          print ("Slowing momentum.  Backtracking ", i+1, " servers.", sep="")
+          
+          # Back track by one server at a time.
+          num_servers = num_servers - 1
+          
+          # Adjust current and future server counts.
+          adjust_schedule(server_schedule, hour, num_servers)
+
+          # Simulate and retrieve average wait time.
+          data = simulate(database, plane_dispatcher, server_schedule, spd_factor)
+          new_ave_wait = int(data[data['hour'] == hour].iloc[0]['ave_wait'])
+
+          if new_ave_wait >= threshold:
+            num_servers = num_servers + 1
+            adjust_schedule(server_schedule, hour, num_servers)
+            break
+
         greedy_optimized = True
 
       # If our new wait time crosses the threshold the wrong way,
-      # reset server count, customs set-up, and break.
+      # reset server count, and check for breaking conditions in previous period.
       elif ave_wait < threshold and new_ave_wait >= threshold:
-        num_servers = num_servers + 1
-        for hour2 in range(int(hour),24):
-          if int(hour2) >= int(hour):
-            server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour2))] = \
-                                                                         num_servers
-        customs.clean_up_db()
-        del customs
-        customs = Customs(customs_db, server_schedule)
+
+        # Back it up for momentum.
+        for i in range(momentum):
+
+          print ("Slowing momentum.  Backtracking ", i+1, " servers.", sep="")
+          
+          # Back track by one server at a time.
+          num_servers = num_servers + 1
+          
+          # Adjust current and future server counts.
+          adjust_schedule(server_schedule, hour, num_servers)
+
+          # Simulate and retrieve average wait time.
+          data = simulate(database, plane_dispatcher, server_schedule, spd_factor)
+          new_ave_wait = int(data[data['hour'] == hour].iloc[0]['ave_wait'])
+
+          if new_ave_wait < threshold:
+            break
 
         # We have to check that the reduction in servers in the current
         # time period still satisfies time restraints for previous periods.
         if previous_hour is not None:
-          previous_ave_wait = int(data[data['hour'] == int(previous_hour)].iloc[0]['ave_wait'])
-          while previous_ave_wait >= threshold:
-            print (previous_ave_wait)
-            num_servers = num_servers + 1
-            for hour2 in range(int(hour),24):
-              if int(hour2) >= int(hour):
-                server_schedule.iloc[
-                  0, server_schedule.columns.get_loc(str(hour2))] = num_servers
-            customs.clean_up_db()
-            del customs
-            customs = Customs(customs_db, server_schedule)
-            data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
-            previous_ave_wait = int(data[data['hour'] == int(previous_hour)].iloc[0]['ave_wait'])
+          
+          # Look up the previous period's average wait time.
+          previous_ave_wait = int(data[data['hour'] == int(previous_hour)].\
+                              iloc[0]['ave_wait'])
+          
+          # If it is greater than the threshold, add servers to current
+          # time period and re-evaluate.
+          while previous_ave_wait >= threshold and \
+                num_servers <= max_val:
 
-        customs.clean_up_db()
-        del customs
-        customs = Customs(customs_db, server_schedule)
+            print ("Previous period's optimization violated. "
+                   "Adding more servers...")
+            num_servers = num_servers + 1
+            adjust_schedule(server_schedule, hour, num_servers)
+            data = simulate(database, plane_dispatcher, server_schedule,
+                            spd_factor)
+            previous_ave_wait = int(data[data['hour'] == int(previous_hour)].\
+                                iloc[0]['ave_wait'])
+
+        greedy_optimized = True
+
+      # We've hit the max without meeting threshold requirements.
+      elif ave_wait >= threshold and num_servers == max_val:
         greedy_optimized = True
 
       # If our new wait time does not cross a threshold, keep iterating.
@@ -229,40 +310,30 @@ def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshol
         ave_wait = new_ave_wait
         new_ave_wait = None
 
-    # Update pointer to preceeding hour in the simulation.
+    # Hour is optimized. Update pointer to preceeding hour.
     previous_hour = hour
 
-    # Status update.
-    print ("Optimized ", num_servers, " servers in time period ", str(hour),
-           ".", sep="")
+    # Status update for the hour.
+    print("==========================================================")
+    print ("***Optimized ", num_servers, " servers in time period ", str(hour),
+           ".***", sep="")
 
-  # Write report.
-  # Delete former files recursively.
+  # Delete former report files recursively.
   try: os.remove(report_file)
   except OSError: pass
 
-  customs.clean_up_db()
-  del customs
-  customs = Customs(customs_db, server_schedule)
+  # Write final report to CSV.
+  data = simulate(database, plane_dispatcher, server_schedule, spd_factor)
+  data.to_csv(report_file, index=False, columns=["hour", "type", "count",
+                                                 "ave_wait", "max_wait",
+                                                 "ave_server_utilization",
+                                                 "num_servers"])
 
-  data = simulate(customs,
-                  plane_dispatcher,
-                  server_schedule,
-                  spd_factor)
-
-  data.to_csv(report_file,
-              index=False,
-              columns=["hour",
-                       "type",
-                       "count",
-                       "ave_wait",
-                       "max_wait",
-                       "ave_server_utilization",
-                       "num_servers"])
-
-  # Clean-up.
-  #customs.clean_up_db()
-  del customs
+  # Final Status.
+  print(data)
+  print("==========================================================")
+  print("Optimized model complete.  Written to ", report_file, ".", sep="")
+  print("==========================================================")
 
 
 ## ====================================================================
@@ -281,18 +352,15 @@ def main():
   # Initialize a plane dispatcher to generate arrivals from the databse.
   plane_dispatcher = PlaneDispatcher(customs_db)
 
+  # Initialize service times for the passengers.
+  init_service_times(customs_db)
+
   # Optimize
-  optimize(customs_db, plane_dispatcher, server_schedule, spd_factor, 15, report_file)
+  optimize(customs_db, plane_dispatcher, server_schedule, spd_factor,
+           ave_wait_threshold, report_file)
 
-  # Build customs graph from the schedule.
-  #customs = Customs(customs_db, server_schedule)
-
-  # Simulate the throughput, and output the data.
-  #data = simulate(customs, plane_dispatcher, server_schedule, spd_factor)
-  #data.to_csv(report_file, index=False, columns=["hour","type","count","ave_wait","max_wait","ave_server_utilization","num_servers"])
   # Clean-up Resources.
-  #customs.clean_up_db()
-  del plane_dispatcher#, customs
+  del plane_dispatcher
 
 
 if __name__ == "__main__":

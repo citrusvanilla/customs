@@ -29,9 +29,14 @@ import sqlite3
 import numpy as np
 import pandas as pd
 import os
+import time
 
 
 ## ====================================================================
+
+
+# Random seed
+np.random.seed(int(time.time()))
 
 
 # Hourly timestamps (for output)
@@ -242,7 +247,8 @@ class PlaneDispatcher(object):
                                      'first_name, '
                                      'last_name, '
                                      'birthdate, '
-                                     'nationality '
+                                     'nationality, '
+                                     'service_time '
                                   'FROM passengers '
                                   'WHERE flight_num = \'{flight_num}\';'\
                                    .format(flight_num=flight_num)).fetchall()
@@ -339,7 +345,7 @@ class Plane(object):
 
       # Grab attributes.
       pid, flight_num, first_name, \
-      last_name, birthdate, nationality = passenger
+      last_name, birthdate, nationality, service_time = passenger
 
       # Init and append Passenger object with attributes.
       plist.append(Passenger(pid,
@@ -348,7 +354,8 @@ class Plane(object):
                              first_name,
                              last_name,
                              birthdate,
-                             nationality))
+                             nationality,
+                             service_time))
 
       # Increment passenger count.
       if plist[-1].nationality == 'domestic':
@@ -384,7 +391,7 @@ class Passenger(object):
   """
 
   def __init__(self, pid, flight_num, arrival_time, first_name, last_name,
-               birthdate, nationality):
+               birthdate, nationality, service_time):
     '''
     Passenger class must be initialized with nationality and global time.
     '''
@@ -397,7 +404,7 @@ class Passenger(object):
     self.nationality = nationality
     self.enque_time = _get_sec(arrival_time, spd_factor)
     self.departure_time = -1
-    self.service_time = self.init_service_time()
+    self.service_time = int(service_time)
     self.connecting_flight = False
     self.processed = False
 
@@ -464,7 +471,6 @@ class Customs(object):
     """"""
     self.cursor.execute('ALTER TABLE passengers ADD enque_time INTEGER;')
     self.cursor.execute('ALTER TABLE passengers ADD departure_time INTEGER;') 
-    self.cursor.execute('ALTER TABLE passengers ADD service_time INTEGER;')
     self.cursor.execute('ALTER TABLE passengers ADD connecting_flight bool;')
     self.cursor.execute('ALTER TABLE passengers ADD processed bool;')
     self.connection.commit()
@@ -628,8 +634,7 @@ class Customs(object):
 
     # Insert into database
     server_df = server_df.transpose()
-    server_df.to_sql('servers', self.connection, if_exists='replace'
-                    , dtype='real')
+    server_df.to_sql('servers', self.connection, if_exists='replace')
 
     # Perform a summary queries.
     server_data = pd.read_sql(
@@ -719,7 +724,8 @@ class Customs(object):
                                    'first_name text, '
                                    'last_name text, '
                                    'birthdate text, '
-                                   'nationality text);')
+                                   'nationality text, '
+                                   'service_time);')
 
     self.connection.execute('INSERT INTO passengers '
                               'SELECT id, '
@@ -727,7 +733,8 @@ class Customs(object):
                                  'first_name, '
                                  'last_name, '
                                  'birthdate, '
-                                 'nationality '
+                                 'nationality, '
+                                 'service_time '
                               'FROM tmp_passengers;')
 
     self.connection.execute('DROP TABLE tmp_passengers;')
