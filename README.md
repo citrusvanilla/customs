@@ -106,8 +106,8 @@ To run repeated simulations, each with a different realization of every passenge
 
 Simulation results ("outputs") will continuously be appended to the bottom of the following files:
 
-## Output Files
 
+## Output Files
 * output/log.csv: A log of the tracking routine is written to output/log.csv and contains the time in seconds since epoch, number of total simulations needed to arrival at the near-optimal schedule, and the average time in seconds required to run an individual simulation.
 * output/optimized_models.csv: A schedule, broken down per hour, of the number of passengers scheduled to arrive, the average wait for a passenger in the system that arrives in that hour, the maximum wait of all passengers that are scheduled to arrive in that hour, the average server utilization of an online server in that hour, and the optimized number of scheduled servers for that hour.
 * output/heuristic_models.csv: A schedule, broken down per hour, of the number of passengers scheduled to arrive, the average wait for a passenger in the system that arrives in that hour, the maximum wait of all passengers that are scheduled to arrive in that hour, the average server utilization of an online server in that hour, and the heuristic number of scheduled servers for that hour.
@@ -115,3 +115,27 @@ Simulation results ("outputs") will continuously be appended to the bottom of th
 Schedules for both the optimized and heuristic cases will be formatted like the following:
 
 ![Schedule Example](https://i.imgur.com/dhV1hQb.jpg)
+
+
+## Customs Model Discussion
+The customs system is modeled using basic Object Oriented (OO) principle (see diagram above).  An arrivals handler class ("PlaneDispatcher") is in charge of reading schedules and querying flight manifests from the embedded SQLite database.  With this information, the handler class creates and dispatches Plane objects, as well as creates the Passenger objects that each Plane contains.
+
+The Customs class contains two Subsection objects- one each for the domestic subsystem and the international subsystem.  Each subsection has an AssignmentAgent class in charge of holding main queues of passengers, and assigning Passenger objects to individual Server objects.  All Server objects are contained in ParallelServer objects.
+
+The Server object services the passenger and "sends" passengers to a ServicedPassengers list/object upon completion of service.
+
+
+# Greedy Optimization Discussion
+The parameter space for this optimization problem is exponential in the number of time blocks and number of potential servers per time block.  For example, if we want to choose between 1 and 20 servers for 24 successive time periods, we have a potential complexity of O(20^24) ~ 1.67 * 10^31 different possibilities, which is a number much, much larger than the number of grains of sand on planet earth.  The time-based greedy optimization method does a forward search through the simulation, optimizing the number of servers only for the current time period, while ensuring that all previous average time restraints are not violated.  This method reduces the complexity to a linear problem in O(20 * 24) ~ 480.
+
+The pseudo-code for this method looks like the following:
+
+For each successive hour in the simulation:
+1. Adjust the number of servers in the current time period and every time period till the end of the simulation so that the average wait time of a passenger in the current time period is maximized, subject to the restraint that the wait time falls under the time threshold.
+2. If the restraints in any time period prior to the current one are violated, backtrack the number of servers in the current time period and future time periods so that the past restraints still hold.
+3. If the restraints do not hold but the number of servers is at a maximum, break.
+4.  Fix number of servers in current period, and move to next time period.
+
+The "search" for the number of servers uses a method of gradient descent with momentum.  We start by skipping every n-th server in our serach.  If we move closer to our targeted average wait time while adjusting the number of servers in the same direction in successive steps, we continue "skipping".  If we exceed or fall under our threshold, we backtrack the number of servers without skipping until we find the number of servers that maximizes the average wait time subject to falling under a given threshold.
+
+To illustrate, we'll start with a brand new theoretical simulation in which we want to maintain an average wait time for all passengers of less than 20 minutes.  We start with time period 0, which we will call the hour 12:00 midnight to 1:00am.  We initialize the number of servers for period 0 and every period after to be flat at the maximum number of servers possible, which we will say is 15 servers.  At this level, we observe an average wait time of only 5 minutes for passengers arriving between 12 and 1am.  In this case, we can probably afford to reduce the number of online servers while still maintaining a wait time of less than 20 minutes, so we reduce the number of servers for time period 0 and every time period after until the average wait in time period 0 is maximized, but still under the threshold.  So for example, in our case we find that 5 online servers in the current time period and every time period after gives us an average wait time of 19 minutes for passengers arriving from 12a to 1am.  We fix the number of servers then for this time period at 5, and move onto the next time period.  In the next time period (period 1, which covers 1am to 2am), we see that 5 servers is causing passengers that have arrivied in time period 1 to experience an average wait of 27 minutes, which exceeds our threshold.  We therefore adjust the number of servers in time period 1 and every time period thereafter upward until our optimization goal has been reached.  In our example, we find that this is achieved in time period 1 when there are 8 servers online now and for every time period after.  We fix this number of online servers for period 1 at 8, so that we have a final schedule of 5 servers online in time period 0, 8 servers online in time period 1, and TBD servers going forward.  We now We move to time period 2 and repeat this process until the simualtion ends.
