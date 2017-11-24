@@ -43,14 +43,13 @@ The pipeline includes modules for data sourcing and preprocessing ("ETL"), optim
 ## Code Organization
 File | Purpose
 ------------ | -------------
-customs.py |	Implements Multiple Wave Tracking routine.
-customs_obj.py |	Definition of the Wave class and associated data members and member functions.
-customs_scrape_arrivals.py |	Preproesses input video through background modeling and foreground extraction.
-customs_scrape_planes.py |	Preproesses input video through background modeling and foreground extraction.
-customs_passenger_generator.py |	Preproesses input video through background modeling and foreground extraction.
-customs_db.sqlite  |  db
-output/  |  
-schedules/  |  
+customs.py  |  Implements schedule optimization and returns optimized and heuristic schedules as CSVs.
+customs_obj.py  | Objects for governing the Customs system.
+customs_scrape_arrivals.py  |  ETL for arrivals to database.
+customs_scrape_planes.py |  ETL for plane data to database.
+customs_passenger_generator.py |  ETL for passenger data to database.
+customs_db.sqlite  |  Embedded SQLite database containing arrival, plane, passenger and airport data.
+schedules/  |  Contains a sample input schedule to initialize a server schedule optimization.
 
 
 ## The Customs Pipeline, in short
