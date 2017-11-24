@@ -38,7 +38,6 @@ import time
 # Random seed
 np.random.seed(int(time.time()))
 
-
 # Hourly timestamps (for output)
 hourly_timestamps = ["0" + str(i) + ":00:00" for i in range(0,10)] + \
                     [str(i) + ":00:00" for i in range(10,24)]
