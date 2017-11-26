@@ -125,14 +125,36 @@ def simulate(database, plane_dispatcher, server_schedule, speed_factor):
 
 
 def adjust_schedule(schedule, starting_hour, num_servers):
-  """"""
+  """
+  Adjusts the number of servers in a temporary schedule for the current
+  hour and all future hours to a fixed number.
 
+  Args:
+    schedule: a CSV of scheduled servers
+    starting_hour: hour to adjust current and future server counts
+    num_servers: the number of fixed servers
+
+  Returns:
+    VOID
+  """
+
+  # Loop through schedule and adjust.
   for hour in range(starting_hour, 24):
     schedule.iloc[0, schedule.columns.get_loc(str(hour))] = num_servers
 
 
 def init_service_times(database):
-  """"""
+  """
+  Sets a passenger's service time once for an optimization routine.
+  Read/write from a passengers table in passed db.
+
+  Args:
+    database: sqlite database holding a 'passengers' table
+
+  Returns:
+    VOID
+  """
+
   # Define service Distributions
   service_dist_dom = ("00:00:30", "00:01:00", "00:02:00")
   service_dist_intl = ("00:01:00", "00:02:00", "00:04:00")
@@ -165,7 +187,20 @@ def init_service_times(database):
 
 
 def optimize(database, plane_dispatcher, server_schedule, speed_factor, threshold, report_file):
-  """"""
+  """
+  Optimizes a schedule using a greedy search method.
+
+  Args:
+    database: database to write/read i/o data
+    plane_dispatcher: PlaneDispatcher() object holding arrivals
+    server_schedule: a CSV holding scheduled servers
+    speed_factor: a speed factor for simulation time
+    threshold: an average wait threshold to optimize for
+    report_file: a file to write out simulation data
+
+  Returns:
+    data: optimized server schedule as pandas dataframe
+    """
 
   # Define momentum value.
   momentum = 3
@@ -371,22 +406,36 @@ def compare_to_heuristic(model, database, plane_dispatcher, server_schedule, spe
     server_schedule.iloc[0, server_schedule.columns.get_loc(str(hour))] = num_servers
 
   # Simulate.
-  heuristic_model = simulate(database, plane_dispatcher, server_schedule, speed_factor)
+  heuristic_model = simulate(database, plane_dispatcher, server_schedule,
+                             speed_factor)
 
   # Save to output file.
-  heuristic_model.to_csv(report_file, mode="a", index=False, columns=["hour", "type", "count",
-                                                 "ave_wait", "max_wait",
-                                                 "ave_server_utilization",
-                                                 "num_servers"])
+  heuristic_model.to_csv(report_file, mode="a", index=False,
+                         columns=["hour", "type", "count",
+                                  "ave_wait", "max_wait",
+                                  "ave_server_utilization",
+                                  "num_servers"])
 
 
 def reset_db(database):
+  """
+  Clean-up routine to return database to original state.
 
+  Args:
+    database: sqlite database
+
+  Returns:
+    VOID
+  """
+
+  # Open connection to the database.
   connection = sqlite3.connect(database)
   cursor = connection.cursor()
 
+  # Get rid of temporary servers table.
   cursor.execute('DROP TABLE IF EXISTS servers;')
 
+  # Drop some passenger attributes.
   cursor.execute('ALTER TABLE passengers RENAME TO tmp_passengers;')
 
   cursor.execute('CREATE TABLE passengers ('
@@ -408,6 +457,7 @@ def reset_db(database):
 
   cursor.execute('DROP TABLE tmp_passengers;')
 
+  # Close connection to the database.
   connection.commit()
   connection.close()
 
@@ -426,7 +476,7 @@ def main():
   ave_wait_threshold = int(sys.argv[1])
 
   # Create directory to hold output if not exists.
-  if not os.path.exists("./output/"):
+  if not os.path.exists("./output"):
     os.makedirs("./output")
 
   # Read in the sample server schedule.
