@@ -9,7 +9,7 @@ ETL:
 * Python 2.7.11
 * Numpy 1.11.2
 * Pandas 0.19.2
-* SQLite*
+* SQLite
 * Selenium 3.6.0 with html5lib, and associated web drivers
 * BeautifulSoup 4.6.0
 * Faker 0.8.6
@@ -18,18 +18,19 @@ Optimization:
 * Python 2.7.11
 * Numpy 1.11.2
 * Pandas 0.19.2
-* SQLite*
+* SQLite
 
 Analysis:
 * Python 2.7.11
 * Numpy 1.11.2
 * Pandas 0.19.2
-* SQLite*
-* iPython Notebook ....
+* matplotlib 1.5.2
+* SQLite
+* iPython Notebook 4.2.2
 
 
 ## A High-Level Overview
-Scheduling Customs agents to handle incoming international arrivals is one of the biggest factors in a passenger's overall wait time, ultimately contributing to missed domestic flight connections.  The problem can be modeled as a stochastic process in which the passenger's service time by a Customs agent is sampled from a given distribution, and his/her overal wait time is a function of the number of servers working to service passengers in parallel both in the present period, and in periods past.  We present a method here that uses a time-series aware "greedy" forward search of near-optimal server scheduling to minimize the overall number of servers needed to maintain a given average wait threshold for passengers in the system.
+Scheduling Customs agents to handle incoming international arrivals is one of the biggest factors in a passenger's overall wait time, ultimately contributing to missed domestic flight connections.  The problem can be modeled as a stochastic process in which the passenger's service time by a Customs agent is sampled from a given distribution, and his/her overall wait time is a function of the number of servers working to service passengers in parallel both in the present period, and in periods past.  We present a method here that uses a time-series aware "greedy" forward search of near-optimal server scheduling to minimize the overall number of servers needed to maintain a given average wait threshold for passengers in the system.
 
 
 ## Program Architecture
@@ -61,11 +62,11 @@ Though the model can be reasonably ported to any international customs system, w
 
 
 ## Data and Assumptions
-The time-based greedy optimization method can reasonably be ported to any number of problem formulations in which a parallel server block represents one bottleneck in an agent's soujourn time.  For our purposes, we have chosen to demonstrate the effectiveness of this approach on the scheduling of United States Customs Border Patrol (USCBP) agents at the international arrivals terminal of the JFK airport in New York City, New York.
+The time-based greedy optimization method can reasonably be ported to any number of problem formulations in which a parallel server block represents one bottleneck in an agent's sojourn time.  For our purposes, we have chosen to demonstrate the effectiveness of this approach on the scheduling of United States Customs Border Patrol (USCBP) agents at the international arrivals terminal of the JFK airport in New York City, New York.
 
 The schedule of all arrivals is pulled from the official JFK website.  This schedule contains flight numbers, arrival times, and carriers.  We determine the number of total arriving passengers per plane by using the flight numbers and arrival dates as input to SeatGuru's seat map database, which returns the number of passenger seats for the given airline and airplane type.  We do not know the real capacity of each plane arriving, so we uniformly choose a percentage between 80% and 100% for each arrival.
 
-For our simulation, the passenger manifest per plane is unknown, so we choose a random split of domestic and international passengers for each plane, in which the mode is shifted 60/40 in favor of international passengers.  This number is derived from a re-engineering of given average arrival times for both domestic and international passengers that comes from the offical USCBP website.
+For our simulation, the passenger manifest per plane is unknown, so we choose a random split of domestic and international passengers for each plane, in which the mode is shifted 60/40 in favor of international passengers.  This number is derived from a re-engineering of given average arrival times for both domestic and international passengers that comes from the official USCBP website.
 
 Stochasticity for domestic/international splits per plane is determined during ETL.  Therefore, in the main simulation, for every successive time unit, we lookup a potential arrival from a schedule handler.  If a plane is due, the simulation will pull all passengers from the database and pass them to their respective subsections ('domestic' and 'international'), whereby they have entered the simulation and are subject to service by the parallel server blocks.
 
@@ -136,13 +137,23 @@ For each successive hour in the simulation:
 3. If the restraints do not hold but the number of servers is at a maximum, break.
 4.  Fix number of servers in current period, and move to next time period.
 
-The "search" for the number of servers uses a method of gradient descent with momentum.  We start by skipping every n-th server in our serach.  If we move closer to our targeted average wait time while adjusting the number of servers in the same direction in successive steps, we continue "skipping".  If we exceed or fall under our threshold, we backtrack the number of servers without skipping until we find the number of servers that maximizes the average wait time subject to falling under a given threshold.
+The "search" for the number of servers uses a method of gradient descent with momentum.  We start by skipping every n-th server in our search.  If we move closer to our targeted average wait time while adjusting the number of servers in the same direction in successive steps, we continue "skipping".  If we exceed or fall under our threshold, we backtrack the number of servers without skipping until we find the number of servers that maximizes the average wait time subject to falling under a given threshold.
 
 To illustrate, we'll start with a brand new theoretical simulation in which we want to maintain an average wait time for all passengers of less than 20 minutes.  We start with time period 0, which we will call the hour 12:00 midnight to 1:00am.  We initialize the number of servers for period 0 and every period after to be flat at the maximum number of servers possible, which we will say is 15 servers.  At this level, we observe an average wait time of only 5 minutes for passengers arriving between 12 and 1am.  In this case, we can probably afford to reduce the number of online servers while still maintaining a wait time of less than 20 minutes, so we reduce the number of servers for time period 0 and every time period after until the average wait in time period 0 is maximized, but still under the threshold.  So for example, in our case we find that 5 online servers in the current time period and every time period after gives us an average wait time of 19 minutes for passengers arriving from 12a to 1am.  We fix the number of servers then for this time period at 5, and move onto the next time period.  In the next time period (period 1, which covers 1am to 2am), we see that 5 servers is causing passengers that have arrived in time period 1 to experience an average wait of 27 minutes, which exceeds our threshold.  We therefore adjust the number of servers in time period 1 and every time period thereafter upward until our greedy optimization goal has been reached.  In our example, we find that this is achieved in time period 1 when there are 8 servers online now and for every time period after.  We fix this number of online servers for period 1 at 8, so that we have a final schedule of 5 servers online in time period 0, 8 servers online in time period 1, and TBD servers going forward.  We move to time period 2 and repeat this process until the simulation ends.
 
 
+## Analysis and Narrative
+An accompanying iPython Notebook demonstrates the effectiveness of the Greedy Optimization scheduling versus a naive heuristic through the examination of comparative average wait times, maximum wait times, and server utilization.  For details, please see customs_analysis.ipynb.
+
+Specifically, this analysis demonstrates that not only can average wait thresholds be met in the optimized case, but that the average wait time in total as well as the variance of this figure are reduced compared to a naive assignment of the same number of servers.  Servers are also demonstrated to work at the same or slightly reduced levels in the Optimized case, as evaluated by server utilization.
+
+![Comparative Average Wait Times](https://i.imgur.com/G11nAzh.png)
+
+For example, when optimizing a schedule of customs agents to meet an average wait threshold of 30 minutes, we are able to keep the average wait time under 30 minutes and the maximum wait time under 60 minutes for all time periods with 130 total server hours.  We compare this to the heuristic case in which 130 servers are assigned naively.  In this case, the average wait time exceeds the 30 minute threshold in 8 out of 24 hours, and the maximum wait exceeds 60 minutes in 6 of the hours.  In the optimized case, we have a total average server utilization of 0.84 with 4 hours seeing an average utilization of 1.0, whereas the heuristic case sees an average utilization of 0.87 with 5 hours having a utilization of 1.0.
+
+
 ## Program Performance Discussion
-The Optimzation program contained in customs.py is a single-threaded pipeline that make numerous queries and updates of a light-weight embedded SQLite database.  I/O output is restricted to writing CSVs upon program completion.
+The Optimization program contained in customs.py is a single-threaded pipeline that make numerous queries and updates of a light-weight embedded SQLite database.  I/O output is restricted to writing CSVs upon program completion.
 
 On AWS-optimized 2.6Ghz Intel Xeon E5-2666 v3 processors, a single pass of the 24 hour simulation takes about 2-3 seconds.  A full schedule optimization for all 24 hours may comprise anywhere between 100 and 200 simulations, depending on the maximum number of servers that are being evaluated, resulting in an optimization runtime of 4-10 minutes.  To embrace stochastic programming principles, both individual simulations for evaluation purposes and optimizations for scheduling purposes should be run numerous time and their results 
-ensembled.  Run time for ensembling therefore scales linearly with the number of repretitions required.  It is suggested to run the program on as many CPUs cores available for parallelization.
+ensembled.  Run time for ensembling therefore scales linearly with the number of repetitions required.  It is suggested to run the program on as many CPUs cores available for parallelization.
