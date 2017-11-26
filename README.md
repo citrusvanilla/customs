@@ -50,6 +50,7 @@ customs_scrape_arrivals.py  |  ETL for arrivals to database.
 customs_scrape_planes.py |  ETL for plane data to database.
 customs_passenger_generator.py |  ETL for passenger data to database.
 customs_db.sqlite  |  Embedded SQLite database containing arrival, plane, passenger and airport data.
+customs_analysis.ipynb  |  iPython Notebook for analzying results of optimization simulations.
 schedules/  |  Contains a sample input schedule to initialize a server schedule optimization.
 
 
